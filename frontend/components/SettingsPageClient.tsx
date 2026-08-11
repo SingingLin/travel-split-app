@@ -16,12 +16,35 @@ const SECTIONS = [
   { key: "payment-methods", label: "付款方式", anchor: "section-payment-methods" },
 ] as const;
 
-export default function SettingsPageClient({ tripId: _tripId }: { tripId: number }) {
+export default function SettingsPageClient({
+  justCreated = false,
+}: {
+  tripId: number;
+  justCreated?: boolean;
+}) {
   const { trip, reload } = useTrip();
   const [openSections, setOpenSections] = useState<Set<string>>(new Set(["info", "members"]));
   const [activeAnchor, setActiveAnchor] = useState("section-info");
+  const [showCreatedBanner, setShowCreatedBanner] = useState(justCreated);
 
   if (!trip) return null;
+
+  const createdBanner = showCreatedBanner && (
+    <div className="flex items-start gap-2.5 bg-teal-50 border border-teal-200 text-teal-800 rounded-xl px-4 py-3 text-[13px] leading-relaxed">
+      <span className="text-base leading-none">🎉</span>
+      <p className="flex-1">
+        行程建立成功！請先新增成員與確認幣別匯率，再開始記帳 —— 未新增成員前無法選擇付款人。
+      </p>
+      <button
+        type="button"
+        aria-label="關閉提示"
+        onClick={() => setShowCreatedBanner(false)}
+        className="text-teal-500 hover:text-teal-700 leading-none"
+      >
+        ✕
+      </button>
+    </div>
+  );
 
   const toggleSection = (key: string) => {
     setOpenSections((prev) => {
@@ -82,6 +105,7 @@ export default function SettingsPageClient({ tripId: _tripId }: { tripId: number
           </nav>
         </div>
         <div className="flex-1 flex flex-col gap-4 min-w-0">
+          {createdBanner}
           {sections.map((s) => (
             <div key={s.key}>{s.full}</div>
           ))}
@@ -90,6 +114,7 @@ export default function SettingsPageClient({ tripId: _tripId }: { tripId: number
 
       {/* ===== Mobile ===== */}
       <div className="lg:hidden px-3.5 py-3.5 flex flex-col gap-2.5">
+        {createdBanner}
         {SECTIONS.map((s, i) => {
           const isOpen = openSections.has(s.key);
           return (

@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useTrip } from "@/lib/TripContext";
 import { deleteExpense, listExpenses } from "@/lib/api";
+import { useToast } from "@/lib/ToastContext";
 import type { Expense } from "@/lib/types";
 import Avatar from "@/components/Avatar";
-import { CategoryChip, SplitStatusBadge } from "@/components/Chip";
+import { CategoryChip, ExpenseTypeBadge, SplitStatusBadge } from "@/components/Chip";
 import { formatDate, formatMoney } from "@/lib/format";
 import ExpenseFormDialog from "@/components/ExpenseFormDialog";
 import ConfirmButton from "@/components/ConfirmButton";
@@ -23,6 +25,8 @@ const EMPTY_FILTERS: Filters = { date_from: "", date_to: "", category_id: "", pa
 
 export default function ExpensesPageClient({ tripId }: { tripId: number }) {
   const { trip, reload: reloadTrip } = useTrip();
+  const router = useRouter();
+  const { showToast } = useToast();
   const [expenses, setExpenses] = useState<Expense[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
@@ -44,7 +48,14 @@ export default function ExpensesPageClient({ tripId }: { tripId: number }) {
 
   useEffect(load, [tripId, filters]);
 
-  const total = useMemo(() => (expenses ?? []).reduce((sum, e) => sum + e.base_amount, 0), [expenses]);
+  // Income nets *against* the total (same signed convention as
+  // routers/trips.py's trip-list-card total and services/settlement.py)
+  // rather than adding to it — otherwise logging an income would inflate
+  // this "合計", which is meant to read as net spend.
+  const total = useMemo(
+    () => (expenses ?? []).reduce((sum, e) => sum + (e.type === "income" ? -e.base_amount : e.base_amount), 0),
+    [expenses]
+  );
 
   if (!trip) return null;
 
@@ -52,7 +63,17 @@ export default function ExpensesPageClient({ tripId }: { tripId: number }) {
   const memberById = new Map(trip.members.map((m) => [m.id, m]));
   const paymentMethodById = new Map(trip.payment_methods.map((pm) => [pm.id, pm]));
 
+  // Guard against entering the expense form when the trip has no members yet
+  // — the "payer" dropdown would be empty (backend create_trip doesn't
+  // auto-create any members). Covers trips reached via a direct URL or old
+  // trips created before the settings-first onboarding flow existed.
+  const hasMembers = trip.members.length > 0;
+
   const openCreate = () => {
+    if (!hasMembers) {
+      router.push(`/trips/${tripId}/settings`);
+      return;
+    }
     setEditing(null);
     setFormOpen(true);
   };
@@ -69,12 +90,24 @@ export default function ExpensesPageClient({ tripId }: { tripId: number }) {
     try {
       await deleteExpense(tripId, id);
       load();
+      reloadTrip();
+      showToast("已刪除支出");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "刪除失敗");
+      showToast(e instanceof Error ? e.message : "刪除支出失敗", "error");
     }
   };
 
-  const filterInputCls = "w-full border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-600";
+  // Desktop filter bar: fixed, compact per-field widths, no baked-in
+  // `w-full` in the base class. The previous version shared a `filterInputCls`
+  // that DID bake in `w-full`, and every desktop control appended a narrower
+  // width on top (e.g. `filterInputCls + " w-auto"`) — but that never
+  // actually overrode `w-full`: both are single-class Tailwind utilities of
+  // equal CSS specificity, so which one wins is decided by their order in
+  // Tailwind's generated stylesheet, not by where they appear in the
+  // className string. `w-full` happened to win, so every desktop filter
+  // control silently stretched to the row's full width and wrapped onto its
+  // own line — hence this dedicated class with no width baked in at all.
+  const desktopFilterInputCls = "border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-600";
 
   return (
     <div className="relative">
@@ -82,17 +115,28 @@ export default function ExpensesPageClient({ tripId }: { tripId: number }) {
       <div className="hidden lg:block px-8 py-5">
         <div className="flex items-center justify-between mb-4">
           <p className="text-2xl font-bold text-slate-900">支出記帳</p>
-          <button
-            onClick={openCreate}
-            className="bg-teal-600 hover:bg-teal-700 text-white rounded-lg px-4 py-2.5 text-sm font-medium shadow-sm"
-          >
-            ＋ 新增支出
-          </button>
+          <div className="flex items-center gap-2.5">
+            {!hasMembers && (
+              <span className="text-xs text-amber-600">此行程尚無成員，請先到設定新增成員</span>
+            )}
+            <button
+              onClick={openCreate}
+              title={!hasMembers ? "請先到行程設定新增成員" : undefined}
+              aria-disabled={!hasMembers}
+              className={
+                hasMembers
+                  ? "bg-teal-600 hover:bg-teal-700 text-white rounded-lg px-4 py-2.5 text-sm font-medium shadow-sm"
+                  : "bg-slate-200 text-slate-400 cursor-not-allowed rounded-lg px-4 py-2.5 text-sm font-medium"
+              }
+            >
+              ＋ 新增支出
+            </button>
+          </div>
         </div>
 
-        <div className="flex items-center gap-2.5 mb-3.5 flex-wrap">
+        <div className="flex items-center gap-2 mb-3.5">
           <select
-            className={filterInputCls + " w-auto"}
+            className={desktopFilterInputCls + " w-28 shrink-0"}
             value={filters.category_id}
             onChange={(e) => setFilters((f) => ({ ...f, category_id: e.target.value }))}
           >
@@ -104,7 +148,7 @@ export default function ExpensesPageClient({ tripId }: { tripId: number }) {
             ))}
           </select>
           <select
-            className={filterInputCls + " w-auto"}
+            className={desktopFilterInputCls + " w-28 shrink-0"}
             value={filters.payer_id}
             onChange={(e) => setFilters((f) => ({ ...f, payer_id: e.target.value }))}
           >
@@ -117,25 +161,25 @@ export default function ExpensesPageClient({ tripId }: { tripId: number }) {
           </select>
           <input
             type="date"
-            className={filterInputCls + " w-auto"}
+            className={desktopFilterInputCls + " w-[136px] shrink-0"}
             value={filters.date_from}
             onChange={(e) => setFilters((f) => ({ ...f, date_from: e.target.value }))}
           />
-          <span className="text-slate-300 text-xs">–</span>
+          <span className="text-slate-300 text-xs shrink-0">–</span>
           <input
             type="date"
-            className={filterInputCls + " w-auto"}
+            className={desktopFilterInputCls + " w-[136px] shrink-0"}
             value={filters.date_to}
             onChange={(e) => setFilters((f) => ({ ...f, date_to: e.target.value }))}
           />
           <input
-            className={filterInputCls + " w-44"}
+            className={desktopFilterInputCls + " w-40 shrink-0"}
             placeholder="搜尋項目名稱…"
             value={filters.search}
             onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))}
           />
           <div className="flex-1" />
-          <span className="text-xs text-slate-400">
+          <span className="text-xs text-slate-400 shrink-0 whitespace-nowrap">
             共 {expenses?.length ?? 0} 筆・合計 {formatMoney(total, trip.base_currency_code)}
           </span>
         </div>
@@ -165,17 +209,38 @@ export default function ExpensesPageClient({ tripId }: { tripId: number }) {
                 const pm = e.payment_method_id ? paymentMethodById.get(e.payment_method_id) : undefined;
                 const currency = trip.currencies.find((c) => c.id === e.currency_id);
                 const allSettled = e.shares.length > 0 && e.shares.every((s) => s.is_settled);
+                const isIncome = e.type === "income";
                 return (
                   <tr key={e.id} className="border-b border-slate-100 hover:bg-slate-50 group">
                     <td className="px-3 py-2.5 whitespace-nowrap">{formatDate(e.date)}</td>
                     <td className="px-3 py-2.5">
                       {category ? <CategoryChip name={category.name} color={category.color} /> : "-"}
                     </td>
-                    <td className="px-3 py-2.5">{e.name}</td>
-                    <td className="px-3 py-2.5 text-right tabular-nums text-slate-500 text-xs">
+                    <td className="px-3 py-2.5">
+                      <div className="flex items-center gap-1.5">
+                        <span>{e.name}</span>
+                        <ExpenseTypeBadge type={e.type} compact />
+                        {e.image_url && (
+                          <span title="這筆有附圖" aria-label="這筆有附圖" className="text-slate-400 text-xs">
+                            📎
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td
+                      className={`px-3 py-2.5 text-right tabular-nums text-xs ${
+                        isIncome ? "text-emerald-600 font-semibold" : "text-slate-500"
+                      }`}
+                    >
+                      {isIncome ? "+" : ""}
                       {formatMoney(e.amount, currency?.code)}
                     </td>
-                    <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-slate-900">
+                    <td
+                      className={`px-3 py-2.5 text-right tabular-nums font-semibold ${
+                        isIncome ? "text-emerald-600" : "text-slate-900"
+                      }`}
+                    >
+                      {isIncome ? "+" : ""}
                       {formatMoney(e.base_amount, trip.base_currency_code)}
                     </td>
                     <td className="px-3 py-2.5">
@@ -238,38 +303,78 @@ export default function ExpensesPageClient({ tripId }: { tripId: number }) {
           </span>
         </div>
 
+        {!hasMembers && (
+          <button
+            type="button"
+            onClick={() => router.push(`/trips/${tripId}/settings`)}
+            className="w-full text-left text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3"
+          >
+            此行程尚無成員，請先到設定新增成員才能記帳 →
+          </button>
+        )}
+
         {error && <p className="text-sm text-rose-600 mb-3">{error}</p>}
 
         <div className="flex flex-col gap-2">
           {(expenses ?? []).map((e) => {
             const category = e.category_id ? categoryById.get(e.category_id) : undefined;
             const payer = memberById.get(e.payer_id);
+            const isIncome = e.type === "income";
             return (
-              <button
-                key={e.id}
-                onClick={() => openEdit(e)}
-                className="text-left bg-white border border-slate-200 rounded-[10px] px-3.5 py-2.5"
-              >
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-[13.5px] font-semibold text-slate-900 flex items-center gap-1.5 min-w-0">
-                    {category && <CategoryChip name={category.name} color={category.color} compact />}
-                    <span className="truncate">{e.name}</span>
-                  </span>
-                  <span className="text-[14.5px] font-bold tabular-nums text-slate-900 shrink-0 ml-2">
-                    {formatMoney(e.base_amount, trip.base_currency_code)}
-                  </span>
+              // Card itself opens the edit form on click; the delete icon
+              // lives in a sibling overlay (not nested inside the edit
+              // button — nesting an interactive <button> inside another is
+              // invalid HTML) positioned top-right, same pattern as
+              // TripCard.tsx's delete affordance over its clickable Link.
+              // Its wrapper stops the click from bubbling so tapping delete
+              // never also triggers the card's onClick underneath.
+              <div key={e.id} className="relative bg-white border border-slate-200 rounded-[10px]">
+                <button
+                  type="button"
+                  onClick={() => openEdit(e)}
+                  className="w-full text-left px-3.5 py-2.5"
+                >
+                  <div className="flex items-center justify-between mb-1 pr-7">
+                    <span className="text-[13.5px] font-semibold text-slate-900 flex items-center gap-1.5 min-w-0">
+                      {category && <CategoryChip name={category.name} color={category.color} compact />}
+                      <span className="truncate">{e.name}</span>
+                      <ExpenseTypeBadge type={e.type} compact />
+                      {e.image_url && (
+                        <span title="這筆有附圖" aria-label="這筆有附圖" className="text-slate-400 text-[11px] shrink-0">
+                          📎
+                        </span>
+                      )}
+                    </span>
+                    <span
+                      className={`text-[14.5px] font-bold tabular-nums shrink-0 ml-2 ${
+                        isIncome ? "text-emerald-600" : "text-slate-900"
+                      }`}
+                    >
+                      {isIncome ? "+" : ""}
+                      {formatMoney(e.base_amount, trip.base_currency_code)}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-[11px] text-slate-500">
+                    <span>{formatDate(e.date)}</span>
+                    <span>·</span>
+                    {payer && <Avatar name={payer.name} color={payer.color} size="xs" />}
+                    <SplitStatusBadge
+                      needsSplit={e.needs_split}
+                      participantCount={e.shares.length}
+                      allSettled={e.shares.length > 0 && e.shares.every((s) => s.is_settled)}
+                    />
+                  </div>
+                </button>
+                <div className="absolute top-2 right-2" onClick={(ev) => ev.stopPropagation()}>
+                  <ConfirmButton
+                    message={`確定要刪除「${e.name}」這筆支出嗎？`}
+                    onConfirm={() => handleDelete(e.id)}
+                    className="w-7 h-7 rounded-full bg-white border border-slate-200 text-slate-400 hover:text-rose-600 hover:border-rose-200 flex items-center justify-center text-xs"
+                  >
+                    🗑
+                  </ConfirmButton>
                 </div>
-                <div className="flex items-center gap-1.5 text-[11px] text-slate-500">
-                  <span>{formatDate(e.date)}</span>
-                  <span>·</span>
-                  {payer && <Avatar name={payer.name} color={payer.color} size="xs" />}
-                  <SplitStatusBadge
-                    needsSplit={e.needs_split}
-                    participantCount={e.shares.length}
-                    allSettled={e.shares.length > 0 && e.shares.every((s) => s.is_settled)}
-                  />
-                </div>
-              </button>
+              </div>
             );
           })}
           {expenses && expenses.length === 0 && (
@@ -282,7 +387,11 @@ export default function ExpensesPageClient({ tripId }: { tripId: number }) {
         <button
           onClick={openCreate}
           aria-label="新增支出"
-          className="fixed bottom-20 right-4 w-14 h-14 rounded-full bg-teal-600 text-white shadow-lg text-2xl flex items-center justify-center z-20"
+          title={!hasMembers ? "請先到行程設定新增成員" : undefined}
+          aria-disabled={!hasMembers}
+          className={`fixed bottom-20 right-4 w-14 h-14 rounded-full shadow-lg text-2xl flex items-center justify-center z-20 ${
+            hasMembers ? "bg-teal-600 text-white" : "bg-slate-300 text-slate-500"
+          }`}
         >
           ＋
         </button>
@@ -372,6 +481,7 @@ export default function ExpensesPageClient({ tripId }: { tripId: number }) {
         trip={trip}
         expense={editing}
         onSaved={handleSaved}
+        onTripChanged={reloadTrip}
       />
     </div>
   );

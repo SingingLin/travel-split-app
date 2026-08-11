@@ -54,3 +54,43 @@ def rebalance_remainder(shares: dict[int, float], total: float) -> dict[int, flo
         last_key = list(cents.keys())[-1]
         cents[last_key] += diff
     return {mid: from_cents(c) for mid, c in cents.items()}
+
+
+def weighted_split(amount: float, member_shares: dict[int, int]) -> dict[int, float]:
+    """Split `amount` proportionally to each member's integer "share count"
+    (e.g. someone who eats more can be given 2 shares vs everyone else's 1),
+    returning member_id -> amount. Used by the '依份數分攤' split mode.
+
+    Same hard guarantee as equal_split: sum(result.values()) == round(amount, 2)
+    exactly (in cents). Each member's ideal cents allocation
+    (total_cents * their_shares / total_shares) is floored, then the leftover
+    cents (lost to flooring) are handed out one-by-one to the members with the
+    largest fractional remainder first (largest-remainder method) — ties are
+    broken by `member_shares` insertion order, so the split is deterministic.
+
+    Every value in `member_shares` must be a positive integer; 0 or negative
+    share counts are rejected (a member who isn't participating should simply
+    be omitted from `member_shares`, not included with a 0/negative weight).
+    """
+    if not member_shares:
+        return {}
+    for member_id, shares in member_shares.items():
+        if shares <= 0:
+            raise ValueError(f"share count for member {member_id} must be a positive integer, got {shares}")
+
+    member_ids = list(member_shares.keys())
+    total_shares = sum(member_shares.values())
+    total_cents = to_cents(amount)
+
+    ideal_cents = {mid: total_cents * member_shares[mid] / total_shares for mid in member_ids}
+    base_cents = {mid: int(ideal_cents[mid]) for mid in member_ids}  # floor (ideal_cents is always >= 0)
+    remainder = total_cents - sum(base_cents.values())
+
+    # Largest fractional remainder first; Python's sort is stable so ties keep
+    # `member_shares`' original insertion order (mirrors equal_split's
+    # "first members in list order" tie-break rule).
+    order = sorted(member_ids, key=lambda mid: ideal_cents[mid] - base_cents[mid], reverse=True)
+    for i in range(remainder):
+        base_cents[order[i]] += 1
+
+    return {mid: from_cents(base_cents[mid]) for mid in member_ids}

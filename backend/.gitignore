@@ -4,3 +4,5 @@ __pycache__/
 *.db
 *.db-journal
 .pytest_cache/
+uploads/
+.manual_backups/

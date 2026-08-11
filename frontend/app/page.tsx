@@ -6,6 +6,7 @@ import { listTrips } from "@/lib/api";
 import type { TripSummary } from "@/lib/types";
 import TripCard from "@/components/TripCard";
 import CreateTripDialog from "@/components/CreateTripDialog";
+import BrandMark from "@/components/BrandMark";
 
 export default function HomePage() {
   const [trips, setTrips] = useState<TripSummary[] | null>(null);
@@ -25,9 +26,7 @@ export default function HomePage() {
     <div className="flex-1 flex flex-col">
       <header className="flex items-center justify-between px-4 md:px-8 py-3.5 border-b border-slate-200 bg-white">
         <div className="flex items-center gap-2">
-          <span className="w-7 h-7 rounded-lg bg-teal-600 text-white flex items-center justify-center text-sm font-bold">
-            T
-          </span>
+          <BrandMark />
           <div>
             <div className="font-bold text-slate-900 leading-tight">TravelSplit</div>
             <div className="hidden md:block text-xs text-slate-500 leading-tight">旅行分帳，回國一次結清</div>
@@ -79,7 +78,7 @@ export default function HomePage() {
             {/* Desktop grid */}
             <div className="hidden md:grid grid-cols-2 lg:grid-cols-3 gap-4">
               {trips.map((trip) => (
-                <TripCard key={trip.id} trip={trip} />
+                <TripCard key={trip.id} trip={trip} onDeleted={load} />
               ))}
               <button
                 onClick={() => setDialogOpen(true)}
@@ -95,7 +94,7 @@ export default function HomePage() {
             {/* Mobile list */}
             <div className="md:hidden flex flex-col gap-3">
               {trips.map((trip) => (
-                <TripCard key={trip.id} trip={trip} />
+                <TripCard key={trip.id} trip={trip} onDeleted={load} />
               ))}
             </div>
             <p className="md:hidden text-center text-xs text-slate-400 mt-4">
@@ -107,9 +106,19 @@ export default function HomePage() {
 
       <CreateTripDialog
         open={dialogOpen}
-        onClose={() => setDialogOpen(false)}
-        onCreated={(trip) => {
+        onClose={() => {
           setDialogOpen(false);
+          // The trip (and possibly some members/currencies) may already
+          // exist even if the user closed the dialog after a partial-failure
+          // toast instead of retrying — refresh so the home list (member
+          // avatars, etc.) reflects whatever did get created.
+          load();
+        }}
+        onTripCreated={load}
+        onFinished={(trip) => {
+          setDialogOpen(false);
+          // Members/currencies are all set up in this single submit, so go
+          // straight to the expense list instead of detouring through Settings.
           router.push(`/trips/${trip.id}`);
         }}
       />

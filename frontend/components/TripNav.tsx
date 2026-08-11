@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { ReactNode } from "react";
 import { AvatarStack } from "./Avatar";
+import BrandMark from "./BrandMark";
 import type { TripDetail } from "@/lib/types";
 
 const TABS = [
@@ -40,9 +41,7 @@ export default function TripNav({
       <header className="hidden lg:flex items-center justify-between px-8 py-3 border-b border-slate-200 bg-white sticky top-0 z-30">
         <div className="flex items-center gap-6">
           <Link href="/" className="flex items-center gap-2">
-            <span className="w-7 h-7 rounded-lg bg-teal-600 text-white flex items-center justify-center text-sm font-bold">
-              T
-            </span>
+            <BrandMark />
             <span className="font-bold text-slate-900">TravelSplit</span>
           </Link>
           <span className="text-slate-300">/</span>

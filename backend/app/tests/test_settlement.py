@@ -137,3 +137,119 @@ def test_no_expenses_no_transfers():
     assert result["suggested_transfers"] == []
     assert result["matrix"] == []
     assert all(m["net"] == 0.0 for m in result["members"])
+
+
+# ---------- type="income" ----------
+# See the module docstring in services/settlement.py for the full design
+# rationale (signed_amount/signed_share_amount). Summary: an income row's
+# contribution to `paid`/`owed` is the exact negation of what the same
+# numbers would contribute as an expense, applied uniformly to both the
+# split-shares branch and the personal (non-split) branch — that symmetry is
+# what guarantees sum(net) always stays exactly 0 for ANY mix of
+# split/non-split expenses/incomes (every single transaction's own
+# paid-delta/owed-delta cancel out on their own, so any combination of them
+# does too). One consequence: a personal (non-split) income is net-neutral
+# for its receiver, exactly like a personal (non-split) expense already is —
+# both move `paid` and `owed` by the same signed amount, so `net` is
+# unaffected. A *split* income, however, does shift `net` for the members
+# it's shared with (see test_split_income_reduces_shared_members_owed_and_
+# raises_their_net below) — that's the "大家共享的退款" case.
+def test_personal_income_reduces_payer_total_paid_and_is_net_neutral():
+    expenses = [
+        {"payer_id": 1, "amount": 200.0, "needs_split": False, "type": "income", "shares": []},
+    ]
+    result = compute_settlement(MEMBERS, expenses)
+    by_id = {m["member_id"]: m for m in result["members"]}
+    assert by_id[1]["total_paid"] == -200.0
+    # Symmetric with total_owed (see rationale above) -> net unaffected by a
+    # purely personal income, same as a purely personal expense already is.
+    assert by_id[1]["total_owed"] == -200.0
+    assert by_id[1]["net"] == 0.0
+    # Nobody else is touched by a personal (non-split) transaction.
+    assert by_id[2]["net"] == 0.0
+    assert by_id[3]["net"] == 0.0
+
+
+def test_split_income_reduces_shared_members_owed_and_raises_their_net():
+    # Singing collects a 300 refund (e.g. a deposit return) shared equally
+    # among all 3 members ("大家共享的退款").
+    expenses = [
+        {
+            "payer_id": 1,
+            "amount": 300.0,
+            "needs_split": True,
+            "type": "income",
+            "shares": [
+                {"member_id": 1, "amount": 100.0},
+                {"member_id": 2, "amount": 100.0},
+                {"member_id": 3, "amount": 100.0},
+            ],
+        },
+    ]
+    result = compute_settlement(MEMBERS, expenses)
+    by_id = {m["member_id"]: m for m in result["members"]}
+
+    # total_owed drops for every member the income is split among, including
+    # the receiver themselves (their own 100-unit share of it).
+    assert by_id[1]["total_owed"] == -100.0
+    assert by_id[2]["total_owed"] == -100.0
+    assert by_id[3]["total_owed"] == -100.0
+
+    # Members 2 and 3 didn't receive any money (total_paid unchanged at 0)
+    # but now owe 100 less each -> their net rises accordingly (they're
+    # better off: the group refund benefits them without them having
+    # collected/held any of the cash personally).
+    assert by_id[2]["total_paid"] == 0.0
+    assert by_id[2]["net"] == 100.0
+    assert by_id[3]["total_paid"] == 0.0
+    assert by_id[3]["net"] == 100.0
+
+    # The receiver (member 1) collected the full 300 (total_paid -300) but
+    # only got owed-credit for their own 100 share, so their net ends up
+    # -200: they're holding 200 that isn't theirs and still needs to reach
+    # members 2 and 3.
+    assert by_id[1]["total_paid"] == -300.0
+    assert by_id[1]["net"] == -200.0
+
+
+def test_mixed_expense_and_income_net_always_sums_to_zero():
+    """The core invariant this app has always guaranteed (see
+    test_net_balances_always_sum_to_zero above for the expense-only version)
+    must keep holding once income rows are mixed in, in any combination of
+    split/non-split expenses and incomes."""
+    expenses = [
+        # Singing pays for a shared dinner.
+        {
+            "payer_id": 1,
+            "amount": 300.0,
+            "needs_split": True,
+            "type": "expense",
+            "shares": [
+                {"member_id": 1, "amount": 100.0},
+                {"member_id": 2, "amount": 100.0},
+                {"member_id": 3, "amount": 100.0},
+            ],
+        },
+        # Singwell buys herself a personal souvenir.
+        {"payer_id": 2, "amount": 50.0, "needs_split": False, "type": "expense", "shares": []},
+        # Lia collects a personal cashback unrelated to the group.
+        {"payer_id": 3, "amount": 20.0, "needs_split": False, "type": "income", "shares": []},
+        # Singing collects a shared hotel-deposit refund, split with Lia only.
+        {
+            "payer_id": 1,
+            "amount": 80.0,
+            "needs_split": True,
+            "type": "income",
+            "shares": [{"member_id": 1, "amount": 40.0}, {"member_id": 3, "amount": 40.0}],
+        },
+    ]
+    result = compute_settlement(MEMBERS, expenses)
+    total_net = sum(m["net"] for m in result["members"])
+    assert abs(total_net) < 0.01
+
+    # Also sanity-check the transfer suggestions built from `net` stay
+    # internally consistent (their total in = total out, same check the
+    # expense-only test_suggested_transfers_balance_matches_net_debts does).
+    total_transferred = sum(t["amount"] for t in result["suggested_transfers"])
+    total_creditor_net = sum(m["net"] for m in result["members"] if m["net"] > 0)
+    assert abs(total_transferred - total_creditor_net) < 0.01

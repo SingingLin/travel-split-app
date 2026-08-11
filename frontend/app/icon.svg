@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- TravelSplit favicon v3: teal-600 rounded square tile + a white/amber
+       "luggage tag" glyph split down the middle (white half / amber half),
+       with a punch-hole at the seam and a small loop above standing in for
+       the tag's string. Distinct direction from v1 (paper airplane + coin)
+       and v2 (map pin + percent badge): here the "split" IS the shape
+       itself (two colored halves of one travel object), not a badge bolted
+       onto an unrelated travel icon. Only 3 flat colors (teal bg / white /
+       amber), no gradients or fine linework, legible at 16x16. Reused
+       verbatim as the header brand mark via components/BrandMark.tsx. -->
+  <rect width="32" height="32" rx="7" fill="#0d9488" />
+  <circle cx="16" cy="7.4" r="2.4" fill="none" stroke="#ffffff" stroke-width="1.7" />
+  <line x1="16" y1="9.6" x2="16" y2="11" stroke="#ffffff" stroke-width="1.4" stroke-linecap="round" />
+  <clipPath id="tagBody">
+    <rect x="8" y="10" width="16" height="17" rx="3.2" />
+  </clipPath>
+  <g clip-path="url(#tagBody)">
+    <rect x="8" y="10" width="8" height="17" fill="#ffffff" />
+    <rect x="16" y="10" width="8" height="17" fill="#f59e0b" />
+  </g>
+  <circle cx="16" cy="14.4" r="1.9" fill="#0d9488" />
+</svg>

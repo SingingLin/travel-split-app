@@ -1,6 +1,13 @@
 import SettingsPageClient from "@/components/SettingsPageClient";
 
-export default async function TripSettingsPage({ params }: { params: Promise<{ tripId: string }> }) {
+export default async function TripSettingsPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ tripId: string }>;
+  searchParams: Promise<{ created?: string }>;
+}) {
   const { tripId } = await params;
-  return <SettingsPageClient tripId={Number(tripId)} />;
+  const { created } = await searchParams;
+  return <SettingsPageClient tripId={Number(tripId)} justCreated={created === "1"} />;
 }

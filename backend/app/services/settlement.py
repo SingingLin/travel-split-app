@@ -14,6 +14,7 @@ Expected input shapes (plain dicts, decoupled from SQLAlchemy models):
       "payer_id": 1,
       "amount": 6000.0,          # already converted to display currency
       "needs_split": True,
+      "type": "expense",        # "expense" (default) | "income" — see below
       "shares": [{"member_id": 1, "amount": 2000.0}, ...],  # converted too
     },
     ...
@@ -23,6 +24,34 @@ Personal (needs_split=False) expenses count as "owed by the payer" in full
 (they paid for themselves, so it nets to zero against their own "paid"
 total) — this keeps the paid/owed/net bookkeeping internally consistent
 without special-casing personal expenses in the UI layer.
+
+`type` ("expense" vs "income") — money direction:
+  "expense" (default): unchanged from the original design above — payer_id
+    is who paid money out.
+  "income": money flowing IN, collected by payer_id (reusing the same field
+    as "receiver" rather than adding a parallel column — see
+    models.Expense.type). Every amount this row contributes to `paid`/`owed`
+    is negated first (`signed_amount`/`signed_share_amount` below) — a
+    receipt is bookkept as the exact mirror image of a payment. This is
+    applied uniformly to BOTH the split-shares branch and the personal
+    (non-split) branch, same as `amount` is for expenses: that symmetry is
+    what keeps a personal (non-split) income exactly as net-neutral for its
+    receiver as a personal expense already is (paid and owed move by the
+    same signed amount, canceling out) — and, more importantly, is what
+    guarantees sum(net) across all members always stays exactly 0 no matter
+    what mix of split/non-split expenses/incomes exist (each transaction's
+    own paid-delta and owed-delta total always cancel, so summing any
+    combination of transactions cancels too). See test_settlement.py's
+    income tests for the exact numbers this produces. A *split* income
+    (needs_split=True) still does what the name implies: it's a shared
+    refund, so it reduces `total_owed` (and thus raises `net`) for every
+    member it's shared with, per the split-shares branch below.
+  The "誰欠誰" raw_debt/matrix bookkeeping below intentionally still uses the
+  raw (unsigned) per-share amount — it's a separate, informational
+  "structural" pairwise breakdown of *expense* debts, not itself part of the
+  paid/owed/net accounting income needs to flip; `net` (which the actual
+  transfer suggestions are computed from, via simplify_debts) already fully
+  reflects the signed accounting above.
 """
 from collections import defaultdict
 
@@ -38,17 +67,20 @@ def compute_settlement(members: list[dict], expenses: list[dict]) -> dict:
     for exp in expenses:
         payer_id = exp["payer_id"]
         amount = exp["amount"]
-        paid[payer_id] = paid.get(payer_id, 0.0) + amount
+        is_income = exp.get("type") == "income"
+        signed_amount = -amount if is_income else amount
+        paid[payer_id] = paid.get(payer_id, 0.0) + signed_amount
 
         if exp.get("needs_split") and exp.get("shares"):
             for share in exp["shares"]:
                 mid = share["member_id"]
                 amt = share["amount"]
-                owed[mid] = owed.get(mid, 0.0) + amt
+                signed_share_amount = -amt if is_income else amt
+                owed[mid] = owed.get(mid, 0.0) + signed_share_amount
                 if mid != payer_id:
                     raw_debt[(mid, payer_id)] += amt
         else:
-            owed[payer_id] = owed.get(payer_id, 0.0) + amount
+            owed[payer_id] = owed.get(payer_id, 0.0) + signed_amount
 
     net: dict[int, float] = {mid: round(paid.get(mid, 0.0) - owed.get(mid, 0.0), 2) for mid in member_ids}
 

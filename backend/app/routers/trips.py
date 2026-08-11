@@ -1,14 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func
+from sqlalchemy import case, func
 from sqlalchemy.orm import Session, selectinload
 
 from app import models, schemas
+from app.constants import DEFAULT_CATEGORIES, DEFAULT_PAYMENT_METHODS
 from app.database import get_db
 
 router = APIRouter(prefix="/api/trips", tags=["trips"])
-
-DEFAULT_CATEGORIES = ["吃喝", "移動", "購物", "票券", "住宿", "機票", "娛樂"]
-DEFAULT_PAYMENT_METHODS = ["現金", "信用卡"]
 
 
 @router.get("", response_model=list[schemas.TripSummaryOut])
@@ -21,8 +19,15 @@ def list_trips(db: Session = Depends(get_db)):
     )
     result = []
     for trip in trips:
+        # income rows net *against* total spend (same signed-amount convention
+        # as services/settlement.py) rather than adding to it — otherwise a
+        # trip that logs a refund/income would show an inflated "總花費".
+        signed_base_amount = case(
+            (models.Expense.type == "income", -models.Expense.base_amount),
+            else_=models.Expense.base_amount,
+        )
         total = (
-            db.query(func.coalesce(func.sum(models.Expense.base_amount), 0.0))
+            db.query(func.coalesce(func.sum(signed_base_amount), 0.0))
             .filter(models.Expense.trip_id == trip.id)
             .scalar()
         )
@@ -44,6 +49,12 @@ def create_trip(payload: schemas.TripCreate, db: Session = Depends(get_db)):
         start_date=payload.start_date,
         end_date=payload.end_date,
         band_color=payload.band_color or "#0d9488",
+        initial_budget=payload.initial_budget,
+        initial_exchange_from_currency=payload.initial_exchange_from_currency,
+        initial_exchange_from_amount=payload.initial_exchange_from_amount,
+        initial_exchange_to_currency=payload.initial_exchange_to_currency,
+        initial_exchange_to_amount=payload.initial_exchange_to_amount,
+        initial_exchange_rate=payload.initial_exchange_rate,
     )
     db.add(trip)
     db.flush()
