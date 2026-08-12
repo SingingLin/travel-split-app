@@ -1,12 +1,14 @@
 "use client";
 
 import { useState } from "react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { useTrip } from "@/lib/TripContext";
 import TripInfoSection from "@/components/settings/TripInfoSection";
 import MembersSection from "@/components/settings/MembersSection";
 import CurrenciesSection from "@/components/settings/CurrenciesSection";
 import CategoriesSection from "@/components/settings/CategoriesSection";
 import PaymentMethodsSection from "@/components/settings/PaymentMethodsSection";
+import DangerZoneSection from "@/components/settings/DangerZoneSection";
 
 const SECTIONS = [
   { key: "info", label: "行程資訊", anchor: "section-info" },
@@ -16,35 +18,16 @@ const SECTIONS = [
   { key: "payment-methods", label: "付款方式", anchor: "section-payment-methods" },
 ] as const;
 
-export default function SettingsPageClient({
-  justCreated = false,
-}: {
-  tripId: number;
-  justCreated?: boolean;
-}) {
+export default function SettingsPageClient({}: { tripId: number }) {
   const { trip, reload } = useTrip();
-  const [openSections, setOpenSections] = useState<Set<string>>(new Set(["info", "members"]));
+  // Mobile accordion defaults to only "成員" expanded, everything else
+  // (including 行程資訊) collapsed — per uiux-audit-2026-08-12.md §1.5, the
+  // most-visited section on mobile is Members, not the trip-info block with
+  // its initial-exchange record (and, previously, the danger zone).
+  const [openSections, setOpenSections] = useState<Set<string>>(new Set(["members"]));
   const [activeAnchor, setActiveAnchor] = useState("section-info");
-  const [showCreatedBanner, setShowCreatedBanner] = useState(justCreated);
 
   if (!trip) return null;
-
-  const createdBanner = showCreatedBanner && (
-    <div className="flex items-start gap-2.5 bg-teal-50 border border-teal-200 text-teal-800 rounded-xl px-4 py-3 text-[13px] leading-relaxed">
-      <span className="text-base leading-none">🎉</span>
-      <p className="flex-1">
-        行程建立成功！請先新增成員與確認幣別匯率，再開始記帳 —— 未新增成員前無法選擇付款人。
-      </p>
-      <button
-        type="button"
-        aria-label="關閉提示"
-        onClick={() => setShowCreatedBanner(false)}
-        className="text-teal-500 hover:text-teal-700 leading-none"
-      >
-        ✕
-      </button>
-    </div>
-  );
 
   const toggleSection = (key: string) => {
     setOpenSections((prev) => {
@@ -105,16 +88,19 @@ export default function SettingsPageClient({
           </nav>
         </div>
         <div className="flex-1 flex flex-col gap-4 min-w-0">
-          {createdBanner}
           {sections.map((s) => (
             <div key={s.key}>{s.full}</div>
           ))}
+          {/* 危險區塊 — always its own card at the very bottom of the whole
+              settings page, after every other section, never inside the
+              accordion collapse mechanism above (see uiux-audit-2026-08-12.md
+              §1.7). */}
+          <DangerZoneSection trip={trip} />
         </div>
       </div>
 
       {/* ===== Mobile ===== */}
       <div className="lg:hidden px-3.5 py-3.5 flex flex-col gap-2.5">
-        {createdBanner}
         {SECTIONS.map((s, i) => {
           const isOpen = openSections.has(s.key);
           return (
@@ -124,12 +110,15 @@ export default function SettingsPageClient({
                 className="w-full flex items-center justify-between px-4 py-3.5 text-sm font-semibold text-slate-900"
               >
                 {s.label}
-                <span className="text-[11px] text-slate-400">{isOpen ? "▾" : "▸"}</span>
+                <span className="text-slate-400">
+                  {isOpen ? <ChevronDown size={15} aria-hidden="true" /> : <ChevronRight size={15} aria-hidden="true" />}
+                </span>
               </button>
               {isOpen && <div className="px-4 pb-4 -mt-1">{sections[i].bare}</div>}
             </div>
           );
         })}
+        <DangerZoneSection trip={trip} />
       </div>
     </div>
   );

@@ -3,10 +3,26 @@
 import { useCallback, useEffect, useState } from "react";
 import Card from "@/components/Card";
 import ConfirmButton from "@/components/ConfirmButton";
+import Dialog from "@/components/Dialog";
+import Button from "@/components/Button";
+import { Plus, X } from "lucide-react";
 import { createCurrency, deleteCurrency, updateCurrency, changeBaseCurrency, getCurrencyRates, ApiError } from "@/lib/api";
 import { useToast } from "@/lib/ToastContext";
 import { CURATED_CURRENCIES, formatCurrencyOption } from "@/lib/currencies";
 import type { TripDetail } from "@/lib/types";
+
+/** Keeps only digits and at most one decimal point — replaces the native
+ * `<input type="number">`'s own filtering so a plain `type="text"` input can
+ * still only ever hold a valid decimal string, without that control's
+ * mouse-wheel-silently-changes-the-value trap (see
+ * uiux-audit-2026-08-12.md §3.2). Used by every amount/rate field in this
+ * component. */
+function filterDecimalInput(raw: string): string {
+  const cleaned = raw.replace(/[^0-9.]/g, "");
+  const firstDot = cleaned.indexOf(".");
+  if (firstDot === -1) return cleaned;
+  return cleaned.slice(0, firstDot + 1) + cleaned.slice(firstDot + 1).replace(/\./g, "");
+}
 
 export default function CurrenciesSection({
   trip,
@@ -24,6 +40,15 @@ export default function CurrenciesSection({
   const [editingRates, setEditingRates] = useState<Record<number, string>>({});
   const [switchingBaseId, setSwitchingBaseId] = useState<number | null>(null);
   const [addError, setAddError] = useState<string | null>(null);
+  // Switching the base currency reflows every amount/net/settlement figure
+  // across the whole trip — this is the highest-impact single action in the
+  // app (see uiux-audit-2026-08-12.md §3.1), so unlike every other row-level
+  // action here (add/edit rate/delete currency) it goes through an explicit
+  // confirm dialog instead of firing the API call straight from the radio's
+  // onChange. `pendingBase` holds the row the user just clicked, awaiting
+  // confirm/cancel; the actual changeBaseCurrency call only happens once
+  // they click "確定切換" below.
+  const [pendingBase, setPendingBase] = useState<{ id: number; code: string } | null>(null);
 
   // Bulk rate lookup state: fetched once (trip-independent — see
   // GET /api/currencies/rates docstring) whenever the trip's base currency
@@ -103,13 +128,20 @@ export default function CurrenciesSection({
     }
   };
 
-  // Radio-select-to-switch: clicking a non-base row's radio directly fires
-  // the existing PUT /api/trips/{trip_id}/base-currency endpoint — no
-  // separate "基準幣別" field anywhere else needed (see design note in
-  // TripInfoSection.tsx, which used to duplicate this control).
-  const setBase = async (id: number, currencyCode: string) => {
+  // Radio-select-to-switch: clicking a non-base row's radio no longer fires
+  // the API call directly — it just opens the confirm dialog below (see
+  // pendingBase's comment above). The actual PUT /api/trips/{trip_id}/base-
+  // currency call only happens once the user confirms in confirmSwitchBase.
+  const requestBase = (id: number, currencyCode: string) => {
     if (switchingBaseId) return;
+    setPendingBase({ id, code: currencyCode });
+  };
+
+  const confirmSwitchBase = async () => {
+    if (!pendingBase) return;
+    const { id, code: currencyCode } = pendingBase;
     setSwitchingBaseId(id);
+    setPendingBase(null);
     try {
       await changeBaseCurrency(trip.id, id);
       onChanged();
@@ -151,7 +183,7 @@ export default function CurrenciesSection({
       <table className="w-full text-[13px]">
         <thead>
           <tr className="text-left text-[11px] text-slate-400 font-semibold uppercase">
-            <th className="pb-1.5 border-b border-slate-200 w-8" />
+            <th className="pb-1.5 border-b border-slate-200 w-8">基準幣</th>
             <th className="pb-1.5 border-b border-slate-200">幣別</th>
             <th className="pb-1.5 border-b border-slate-200 text-right">匯率</th>
             <th className="pb-1.5 border-b border-slate-200 w-14" />
@@ -166,7 +198,7 @@ export default function CurrenciesSection({
                   name="base-currency"
                   checked={c.is_base}
                   disabled={switchingBaseId !== null}
-                  onChange={() => setBase(c.id, c.code)}
+                  onChange={() => requestBase(c.id, c.code)}
                   aria-label={`將「${c.code}」設為基準幣`}
                   className="w-3.5 h-3.5 accent-teal-600 cursor-pointer disabled:cursor-not-allowed"
                 />
@@ -197,9 +229,9 @@ export default function CurrenciesSection({
                   <ConfirmButton
                     message={`確定要刪除幣別「${c.code}」嗎？若已被支出使用，刪除將會失敗。`}
                     onConfirm={() => remove(c.id, c.code)}
-                    className="text-slate-400 hover:text-rose-600"
+                    className="text-slate-400 hover:text-rose-600 inline-flex items-center"
                   >
-                    ✕
+                    <X size={14} aria-hidden="true" />
                   </ConfirmButton>
                 )}
               </td>
@@ -228,20 +260,46 @@ export default function CurrenciesSection({
         <input
           className="w-28 border border-slate-300 rounded-lg px-3 py-2 text-sm"
           placeholder="匯率"
-          type="number"
-          step="0.00001"
+          type="text"
+          inputMode="decimal"
           value={rate}
-          onChange={(e) => setRate(e.target.value)}
+          onChange={(e) => setRate(filterDecimalInput(e.target.value))}
         />
         <button
           onClick={add}
           disabled={busy}
-          className="border border-dashed border-slate-300 text-slate-500 hover:bg-slate-50 rounded-lg px-3.5 py-2 text-xs font-semibold whitespace-nowrap"
+          className="border border-dashed border-slate-300 text-slate-500 hover:bg-slate-50 rounded-lg px-3.5 py-2 text-xs font-semibold whitespace-nowrap inline-flex items-center gap-1"
         >
-          ＋ 新增幣別
+          <Plus size={13} aria-hidden="true" /> 新增幣別
         </button>
       </div>
       {addError && <p className="text-[11.5px] text-rose-600 mt-1.5">{addError}</p>}
+
+      {/* Confirm dialog for switching the trip's base currency — see
+          pendingBase's own comment above for why this isn't a bare
+          window.confirm/instant API call like the row-level edits above. */}
+      <Dialog
+        open={!!pendingBase}
+        onClose={() => setPendingBase(null)}
+        title="切換基準幣別"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-slate-700">
+            確定要將基準幣別切換為「<span className="font-semibold">{pendingBase?.code}</span>」嗎？
+          </p>
+          <p className="text-[13px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5 leading-relaxed">
+            切換後所有金額將以「{pendingBase?.code}」重新換算顯示，包含每筆支出的換算金額、成員淨額與結算建議。
+          </p>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="secondary" onClick={() => setPendingBase(null)} type="button">
+              取消
+            </Button>
+            <Button onClick={confirmSwitchBase} type="button">
+              確定切換
+            </Button>
+          </div>
+        </div>
+      </Dialog>
     </Wrapper>
   );
 }

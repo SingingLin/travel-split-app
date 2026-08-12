@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import Card from "@/components/Card";
 import Avatar from "@/components/Avatar";
 import ConfirmButton from "@/components/ConfirmButton";
+import { Plus, X } from "lucide-react";
 import { createMember, deleteMember, updateMember } from "@/lib/api";
 import { useToast } from "@/lib/ToastContext";
 import type { Member, TripDetail } from "@/lib/types";
@@ -114,9 +115,9 @@ export default function MembersSection({
             <ConfirmButton
               message={`確定要移除成員「${m.name}」嗎？若此成員已被支出使用，刪除將會失敗。`}
               onConfirm={() => remove(m.id, m.name)}
-              className="text-slate-400 hover:text-rose-600 text-sm"
+              className="text-slate-400 hover:text-rose-600 text-sm inline-flex items-center"
             >
-              ✕
+              <X size={14} aria-hidden="true" />
             </ConfirmButton>
           </div>
         ))}
@@ -133,9 +134,9 @@ export default function MembersSection({
         <button
           onClick={add}
           disabled={busy}
-          className="border border-dashed border-slate-300 text-slate-500 hover:bg-slate-50 rounded-lg px-3.5 py-2 text-xs font-semibold whitespace-nowrap"
+          className="border border-dashed border-slate-300 text-slate-500 hover:bg-slate-50 rounded-lg px-3.5 py-2 text-xs font-semibold whitespace-nowrap inline-flex items-center gap-1"
         >
-          ＋ 新增成員
+          <Plus size={13} aria-hidden="true" /> 新增成員
         </button>
       </div>
     </Wrapper>

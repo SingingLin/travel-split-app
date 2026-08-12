@@ -3,14 +3,20 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { ReactNode } from "react";
+import { ArrowLeft, Receipt, Scale, Settings, type LucideIcon } from "lucide-react";
 import { AvatarStack } from "./Avatar";
 import BrandMark from "./BrandMark";
 import type { TripDetail } from "@/lib/types";
 
-const TABS = [
-  { key: "expenses", label: "記帳", icon: "📒", href: (id: number) => `/trips/${id}` },
-  { key: "settlement", label: "結算總覽", mobileLabel: "結算", icon: "⚖️", href: (id: number) => `/trips/${id}/settlement` },
-  { key: "settings", label: "設定", icon: "⚙️", href: (id: number) => `/trips/${id}/settings` },
+// Emoji (📒/⚖️/⚙️) replaced with lucide-react icons — emoji render with
+// different colors/weights across OS/browser (macOS vs Windows vs Android),
+// which reads as inconsistent next to the rest of the site's icon-like
+// symbols (see uiux-audit-2026-08-12.md §1.2). `icon` is now a component
+// reference, not a string, rendered directly in BottomTabBar below.
+const TABS: { key: string; label: string; mobileLabel?: string; icon: LucideIcon; href: (id: number) => string }[] = [
+  { key: "expenses", label: "記帳", icon: Receipt, href: (id: number) => `/trips/${id}` },
+  { key: "settlement", label: "結算總覽", mobileLabel: "結算", icon: Scale, href: (id: number) => `/trips/${id}/settlement` },
+  { key: "settings", label: "設定", icon: Settings, href: (id: number) => `/trips/${id}/settings` },
 ];
 
 function activeKey(pathname: string, tripId: number): string {
@@ -69,9 +75,9 @@ export default function TripNav({
           <button
             onClick={() => router.push("/")}
             aria-label="返回首頁"
-            className="w-7 h-7 rounded-lg bg-slate-100 text-slate-600 flex items-center justify-center text-sm shrink-0"
+            className="w-7 h-7 rounded-lg bg-slate-100 text-slate-600 flex items-center justify-center shrink-0"
           >
-            ←
+            <ArrowLeft size={15} aria-hidden="true" />
           </button>
           <span className="font-bold text-slate-900 text-[15px] truncate">{mobileTitle ?? defaultMobileTitle}</span>
         </div>
@@ -86,18 +92,21 @@ export function BottomTabBar({ tripId }: { tripId: number }) {
   const active = activeKey(pathname, tripId);
   return (
     <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-30 flex border-t border-slate-200 bg-white">
-      {TABS.map((tab) => (
-        <Link
-          key={tab.key}
-          href={tab.href(tripId)}
-          className={`flex-1 text-center pt-2 pb-3 text-[10.5px] ${
-            active === tab.key ? "text-teal-600 font-semibold" : "text-slate-400"
-          }`}
-        >
-          <span className="block text-base mb-0.5">{tab.icon}</span>
-          {tab.mobileLabel ?? tab.label}
-        </Link>
-      ))}
+      {TABS.map((tab) => {
+        const Icon = tab.icon;
+        return (
+          <Link
+            key={tab.key}
+            href={tab.href(tripId)}
+            className={`flex-1 flex flex-col items-center pt-2 pb-3 text-[10.5px] ${
+              active === tab.key ? "text-teal-600 font-semibold" : "text-slate-400"
+            }`}
+          >
+            <Icon size={18} className="mb-0.5" aria-hidden="true" />
+            {tab.mobileLabel ?? tab.label}
+          </Link>
+        );
+      })}
     </nav>
   );
 }

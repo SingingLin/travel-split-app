@@ -1,3 +1,5 @@
+import { X } from "lucide-react";
+
 export function CategoryChip({
   name,
   color,
@@ -34,10 +36,10 @@ export function CategoryChip({
         <button
           type="button"
           onClick={onRemove}
-          className="ml-0.5 opacity-60 hover:opacity-100"
+          className="ml-0.5 opacity-60 hover:opacity-100 inline-flex items-center"
           aria-label={`移除 ${name}`}
         >
-          ×
+          <X size={11} aria-hidden="true" />
         </button>
       )}
     </span>
@@ -67,10 +69,10 @@ export function NeutralChip({
         <button
           type="button"
           onClick={onRemove}
-          className="ml-0.5 opacity-60 hover:opacity-100"
+          className="ml-0.5 opacity-60 hover:opacity-100 inline-flex items-center"
           aria-label={`移除 ${label}`}
         >
-          ×
+          <X size={11} aria-hidden="true" />
         </button>
       )}
     </span>

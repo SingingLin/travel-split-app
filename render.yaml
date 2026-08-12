@@ -1,0 +1,36 @@
+# Render Blueprint — lets you import this repo into Render as a "Blueprint"
+# (New + -> Blueprint -> pick this repo) to pre-fill the backend web service
+# config below instead of clicking through the manual "New Web Service" form.
+# Safe to keep in git: it only describes *how to build/run* the service, no
+# secrets. See README.md "部署到 Render + Vercel" for the full walkthrough,
+# including exactly which environment variables to fill in by hand afterward.
+#
+# NOTE: `sync: false` on the two envVars below means Render will NOT read a
+# value from this file for them — it prompts you to type each one into the
+# Render dashboard yourself when the Blueprint is applied (and lets you edit
+# them later under the service's "Environment" tab). Never put real values
+# here; this file is committed to git.
+services:
+  - type: web
+    name: travel-split-backend
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      # Neon (or any other) Postgres connection string, e.g.
+      # postgresql://user:pass@host/dbname?sslmode=require — see
+      # backend/app/database.py. Leaving this unset makes the service fall
+      # back to a local SQLite file, which does NOT persist across Render
+      # deploys/restarts — for a real deployment this must be set to your
+      # Postgres URL. SECRET — fill in via the Render dashboard, never here.
+      - key: DATABASE_URL
+        sync: false
+      # Comma-separated list of origins allowed to call this API via CORS,
+      # e.g. https://your-app.vercel.app,https://your-custom-domain.com —
+      # see backend/app/main.py. Not secret, but still environment-specific
+      # (depends on your Vercel URL), so it's left blank here too — fill in
+      # via the Render dashboard once you know your frontend's deployed URL.
+      - key: ALLOWED_ORIGINS
+        sync: false

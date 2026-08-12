@@ -2,14 +2,27 @@
 
 import { useState, type MouseEvent } from "react";
 import Link from "next/link";
+import { Trash2 } from "lucide-react";
 import { AvatarStack } from "./Avatar";
 import { TripStatusBadge } from "./Chip";
 import DeleteTripDialog from "./DeleteTripDialog";
 import { formatMoney } from "@/lib/format";
 import type { TripSummary } from "@/lib/types";
 
-export default function TripCard({ trip, onDeleted }: { trip: TripSummary; onDeleted?: () => void }) {
+export default function TripCard({
+  trip,
+  bandColor,
+  onDeleted,
+}: {
+  trip: TripSummary;
+  /** Overrides trip.band_color for the top band / mobile dot — see
+   * lib/tripColors.ts docstring for why the backend field itself isn't used
+   * directly. Falls back to trip.band_color if not given. */
+  bandColor?: string;
+  onDeleted?: () => void;
+}) {
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const displayColor = bandColor ?? trip.band_color;
 
   const openConfirm = (e: MouseEvent) => {
     e.preventDefault();
@@ -24,15 +37,15 @@ export default function TripCard({ trip, onDeleted }: { trip: TripSummary; onDel
         aria-label="刪除行程"
         title="刪除行程"
         onClick={openConfirm}
-        className="absolute top-2 right-2 z-10 w-7 h-7 rounded-full bg-white/95 border border-slate-200 shadow-sm text-slate-400 hover:text-rose-600 hover:border-rose-200 flex items-center justify-center text-sm"
+        className="absolute top-2 right-2 z-10 w-7 h-7 rounded-full bg-white/95 border border-slate-200 shadow-sm text-slate-400 hover:text-rose-600 hover:border-rose-200 flex items-center justify-center"
       >
-        🗑
+        <Trash2 size={13} aria-hidden="true" />
       </button>
 
       <Link href={`/trips/${trip.id}`} className="block">
         {/* Desktop layout */}
         <div className="hidden md:block">
-          <div className="h-1.5" style={{ backgroundColor: trip.band_color }} />
+          <div className="h-1.5" style={{ backgroundColor: displayColor }} />
           <div className="px-[18px] pt-4">
             <p className="text-base font-semibold text-slate-900 mb-3 pr-7">{trip.name}</p>
             <div className="flex items-end justify-between">
@@ -53,7 +66,7 @@ export default function TripCard({ trip, onDeleted }: { trip: TripSummary; onDel
         {/* Mobile layout */}
         <div className="md:hidden p-3.5 flex flex-col gap-2.5">
           <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: trip.band_color }} />
+            <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: displayColor }} />
             <p className="font-semibold text-slate-900 text-[15px] flex-1 truncate pr-7">{trip.name}</p>
             <TripStatusBadge status={trip.status} />
           </div>

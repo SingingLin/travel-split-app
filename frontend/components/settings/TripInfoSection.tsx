@@ -1,14 +1,24 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import Card from "@/components/Card";
-import Button from "@/components/Button";
-import DeleteTripDialog from "@/components/DeleteTripDialog";
+import { ArrowRight } from "lucide-react";
 import { getCurrencyRates, updateTrip } from "@/lib/api";
 import { useToast } from "@/lib/ToastContext";
 import { CURATED_CURRENCIES, formatCurrencyOption } from "@/lib/currencies";
 import type { TripDetail } from "@/lib/types";
+
+/** Keeps only digits and at most one decimal point — replaces the native
+ * `<input type="number">`'s own filtering so a plain `type="text"` input can
+ * still only ever hold a valid decimal string, without that control's
+ * mouse-wheel-silently-changes-the-value trap (see
+ * uiux-audit-2026-08-12.md §3.2). Used by every amount/rate field below. */
+function filterDecimalInput(raw: string): string {
+  const cleaned = raw.replace(/[^0-9.]/g, "");
+  const firstDot = cleaned.indexOf(".");
+  if (firstDot === -1) return cleaned;
+  return cleaned.slice(0, firstDot + 1) + cleaned.slice(firstDot + 1).replace(/\./g, "");
+}
 
 /** Parses a raw input string into a positive-or-zero number, or null for an
  * empty/blank string, or NaN for anything else unparseable — callers treat
@@ -38,8 +48,11 @@ function roundRateForInput(n: number): string {
 }
 
 /**
- * Trip name + base currency display, initial-exchange record, and the danger
- * zone. Auto-saves on blur/select (no standalone "儲存" button) so the whole
+ * Trip name + base currency display and the initial-exchange record. (The
+ * "危險區塊"/delete-trip card used to live at the bottom of this same
+ * component — it's now its own DangerZoneSection, rendered separately at the
+ * very bottom of the settings page; see uiux-audit-2026-08-12.md §1.7.)
+ * Auto-saves on blur/select (no standalone "儲存" button) so the whole
  * 行程設定 page behaves consistently — every other section here (Members/
  * Currencies/Categories/PaymentMethods) already commits each change
  * immediately via its create/update/delete API call + a toast, per earlier
@@ -74,9 +87,28 @@ export default function TripInfoSection({
 }) {
   const [name, setName] = useState(trip.name);
   const [saving, setSaving] = useState(false);
-  const [deleteOpen, setDeleteOpen] = useState(false);
+
+  // "前往切換" for the read-only 基準幣別 field below — scrolls to
+  // CurrenciesSection's card (id="section-currencies", rendered by a sibling
+  // component in SettingsPageClient) and briefly highlights it, per
+  // uiux-audit-2026-08-12.md §1.3/§1.4: this field used to look like a
+  // clickable dropdown but silently did nothing, so switching the base
+  // currency needs an explicit, working entry point. Plain DOM lookup (not a
+  // ref) since CurrenciesSection isn't a child of this component — same
+  // approach as SettingsPageClient's own `#section-xxx` anchor nav links. On
+  // mobile, if that section's accordion happens to be collapsed the card
+  // isn't mounted yet and this is a no-op; the user can still open it
+  // manually from the accordion list right below.
+  const goToCurrencySwitch = () => {
+    const el = document.getElementById("section-currencies");
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
+    el.classList.add("ring-2", "ring-teal-400", "ring-offset-2");
+    window.setTimeout(() => {
+      el.classList.remove("ring-2", "ring-teal-400", "ring-offset-2");
+    }, 1600);
+  };
   const [nameError, setNameError] = useState<string | null>(null);
-  const router = useRouter();
   const { showToast } = useToast();
   const inputCls =
     "w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:border-teal-500 focus:ring-2 focus:ring-teal-100 outline-none";
@@ -121,11 +153,14 @@ export default function TripInfoSection({
   // Five independently-editable fields (see models.Trip docstring). Kept as
   // raw strings (not numbers) so a field can hold an empty/in-progress value
   // without fighting the user's typing, same pattern as ExpenseFormDialog's
-  // amount fields. fromCurrency defaults to the trip's base currency when no
-  // record exists yet (the common case — see task example "TWD 換 USD") but
-  // this is purely a local UI default; nothing is saved until the user
+  // amount fields. fromCurrency used to default to the trip's base currency
+  // when no record exists yet, but that collided with 換入幣別 in
+  // single-currency trips (换出/换入 defaulting to the same code trips
+  // straight into the "不能相同" validation error before the user has even
+  // touched the field) — per uiux-audit-2026-08-12.md §3.6 it now starts
+  // blank and the user picks it explicitly; nothing is saved until the user
   // actually fills in an amount/blurs a field.
-  const [fromCurrency, setFromCurrency] = useState(trip.initial_exchange_from_currency ?? trip.base_currency_code);
+  const [fromCurrency, setFromCurrency] = useState(trip.initial_exchange_from_currency ?? "");
   const [fromAmount, setFromAmount] = useState(
     trip.initial_exchange_from_amount != null ? String(trip.initial_exchange_from_amount) : ""
   );
@@ -142,7 +177,7 @@ export default function TripInfoSection({
   const isEditingExchangeRef = useRef(false);
   useEffect(() => {
     if (isEditingExchangeRef.current) return;
-    setFromCurrency(trip.initial_exchange_from_currency ?? trip.base_currency_code);
+    setFromCurrency(trip.initial_exchange_from_currency ?? "");
     setFromAmount(trip.initial_exchange_from_amount != null ? String(trip.initial_exchange_from_amount) : "");
     setToCurrency(trip.initial_exchange_to_currency ?? "");
     setToAmount(trip.initial_exchange_to_amount != null ? String(trip.initial_exchange_to_amount) : "");
@@ -157,7 +192,7 @@ export default function TripInfoSection({
   ]);
 
   const resetExchangeFields = () => {
-    setFromCurrency(trip.initial_exchange_from_currency ?? trip.base_currency_code);
+    setFromCurrency(trip.initial_exchange_from_currency ?? "");
     setFromAmount(trip.initial_exchange_from_amount != null ? String(trip.initial_exchange_from_amount) : "");
     setToCurrency(trip.initial_exchange_to_currency ?? "");
     setToAmount(trip.initial_exchange_to_amount != null ? String(trip.initial_exchange_to_amount) : "");
@@ -194,7 +229,7 @@ export default function TripInfoSection({
     };
 
     if (draft.fromCurrency && draft.toCurrency && draft.fromCurrency === draft.toCurrency) {
-      setExchangeError("換出與換入幣別不能相同");
+      setExchangeError("換出與換入幣別不能相同，若整趟行程只使用一種幣別，這個欄位可以留空不填");
       resetExchangeFields();
       return;
     }
@@ -388,9 +423,23 @@ export default function TripInfoSection({
         </div>
         <div>
           <label className="block text-[11.5px] text-slate-500 mb-1">基準幣別</label>
-          <p className="text-sm text-slate-600 border border-slate-200 rounded-lg px-3 py-2 bg-slate-50">
-            {trip.base_currency_code} · 請至下方「幣別匯率」區塊的清單切換
-          </p>
+          {/* Deliberately NOT styled like an input (no border/box) — this
+              value is read-only here; per uiux-audit-2026-08-12.md §1.3 the
+              old bordered-box treatment made it look like a clickable
+              dropdown that just silently did nothing when clicked. */}
+          <div className="flex items-center gap-2 py-2">
+            <span className="inline-flex items-center rounded-full px-2.5 py-1 text-sm font-semibold bg-teal-50 text-teal-700">
+              {trip.base_currency_code}
+            </span>
+            <button
+              type="button"
+              onClick={goToCurrencySwitch}
+              className="text-xs text-teal-600 hover:text-teal-700 font-medium inline-flex items-center gap-0.5"
+            >
+              前往切換 <ArrowRight size={12} aria-hidden="true" />
+            </button>
+          </div>
+          <p className="text-[11px] text-slate-400">於下方「幣別匯率」清單切換基準幣</p>
         </div>
 
         <div className="sm:col-span-2">
@@ -419,10 +468,8 @@ export default function TripInfoSection({
               <div>
                 <label className="block text-[10.5px] text-slate-400 mb-1">換出金額</label>
                 <input
-                  type="number"
+                  type="text"
                   inputMode="decimal"
-                  step="0.01"
-                  min="0"
                   className={inputCls}
                   value={fromAmount}
                   disabled={exchangeSaving}
@@ -430,7 +477,7 @@ export default function TripInfoSection({
                   onFocus={() => {
                     isEditingExchangeRef.current = true;
                   }}
-                  onChange={(e) => onFromAmountChange(e.target.value)}
+                  onChange={(e) => onFromAmountChange(filterDecimalInput(e.target.value))}
                   onBlur={() => commitExchange()}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") (e.target as HTMLInputElement).blur();
@@ -473,10 +520,8 @@ export default function TripInfoSection({
               <div>
                 <label className="block text-[10.5px] text-slate-400 mb-1">換入金額（實際帶去旅行用的錢）</label>
                 <input
-                  type="number"
+                  type="text"
                   inputMode="decimal"
-                  step="0.01"
-                  min="0"
                   className={inputCls}
                   value={toAmount}
                   disabled={exchangeSaving}
@@ -484,7 +529,7 @@ export default function TripInfoSection({
                   onFocus={() => {
                     isEditingExchangeRef.current = true;
                   }}
-                  onChange={(e) => onToAmountChange(e.target.value)}
+                  onChange={(e) => onToAmountChange(filterDecimalInput(e.target.value))}
                   onBlur={() => commitExchange()}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") (e.target as HTMLInputElement).blur();
@@ -504,10 +549,8 @@ export default function TripInfoSection({
                 {rateLoading && <span className="ml-1.5 text-slate-400">查詢即時匯率中…</span>}
               </label>
               <input
-                type="number"
+                type="text"
                 inputMode="decimal"
-                step="0.000001"
-                min="0"
                 className={`${inputCls} max-w-[200px]`}
                 value={rate}
                 disabled={exchangeSaving}
@@ -515,7 +558,7 @@ export default function TripInfoSection({
                 onFocus={() => {
                   isEditingExchangeRef.current = true;
                 }}
-                onChange={(e) => onRateChange(e.target.value)}
+                onChange={(e) => onRateChange(filterDecimalInput(e.target.value))}
                 onBlur={() => commitExchange()}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") (e.target as HTMLInputElement).blur();
@@ -533,27 +576,6 @@ export default function TripInfoSection({
           </div>
         </div>
       </div>
-
-      <div className="mt-6 pt-4 border-t border-slate-200">
-        <p className="text-xs font-semibold text-rose-600 mb-1">危險區塊</p>
-        <p className="text-[11.5px] text-slate-400 mb-2.5">
-          刪除此行程將一併移除所有成員、幣別匯率、分類與支出紀錄，且無法復原。
-        </p>
-        <Button variant="danger" type="button" onClick={() => setDeleteOpen(true)}>
-          刪除此行程
-        </Button>
-      </div>
-
-      <DeleteTripDialog
-        open={deleteOpen}
-        onClose={() => setDeleteOpen(false)}
-        tripId={trip.id}
-        tripName={trip.name}
-        onDeleted={() => {
-          setDeleteOpen(false);
-          router.push("/");
-        }}
-      />
     </Wrapper>
   );
 }

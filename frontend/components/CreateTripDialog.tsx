@@ -3,10 +3,23 @@
 import { useEffect, useRef, useState } from "react";
 import Dialog from "./Dialog";
 import Button from "./Button";
+import { Plus, X } from "lucide-react";
 import { createTrip, createMember, createCurrency, getCurrencyRates, ApiError } from "@/lib/api";
 import { useToast } from "@/lib/ToastContext";
 import { CURATED_CURRENCIES, formatCurrencyOption } from "@/lib/currencies";
 import type { TripDetail } from "@/lib/types";
+
+/** Keeps only digits and at most one decimal point — replaces the native
+ * `<input type="number">`'s own filtering so a plain `type="text"` input can
+ * still only ever hold a valid decimal string, without that control's
+ * mouse-wheel-silently-changes-the-value trap (see
+ * uiux-audit-2026-08-12.md §3.2). Used by every rate field below. */
+function filterDecimalInput(raw: string): string {
+  const cleaned = raw.replace(/[^0-9.]/g, "");
+  const firstDot = cleaned.indexOf(".");
+  if (firstDot === -1) return cleaned;
+  return cleaned.slice(0, firstDot + 1) + cleaned.slice(firstDot + 1).replace(/\./g, "");
+}
 
 interface DraftMember {
   id: number;
@@ -98,6 +111,13 @@ export default function CreateTripDialog({
 
   const [errors, setErrors] = useState<{ name?: string; members?: string; currencies?: string }>({});
   const [submitting, setSubmitting] = useState(false);
+  // True once the user has tried "建立行程" at least once and it was blocked
+  // — the "請選擇基準幣別" hint below only switches to warning styling once
+  // this is true (see uiux-audit-2026-08-12.md §2.4: showing a warning color
+  // the instant the dialog opens, before the user has done anything wrong,
+  // reads as "you already made a mistake"). Reset alongside everything else
+  // in resetAll so reopening the dialog starts clean.
+  const [submitAttempted, setSubmitAttempted] = useState(false);
 
   // In-flight/partial-retry bookkeeping — see component docstring.
   const createdTripRef = useRef<TripDetail | null>(null);
@@ -119,6 +139,7 @@ export default function CreateTripDialog({
     setAllRates(null);
     setRatesError(null);
     setErrors({});
+    setSubmitAttempted(false);
     createdTripRef.current = null;
     createdMemberIdsRef.current = new Set();
     createdCurrencyIdsRef.current = new Set();
@@ -187,7 +208,21 @@ export default function CreateTripDialog({
   const takenCodes = new Set(draftCurrencies.map((c) => c.code));
   const extraOptions = CURATED_CURRENCIES.filter((c) => !takenCodes.has(c.code));
 
+  // Picking a currency from the dropdown used to only stage it in
+  // extraCode/extraRate — the user then had to click the separate "＋新增"
+  // button before it actually landed in draftCurrencies and (for the first
+  // one) became the base currency, which blocked "建立行程" until that extra
+  // click happened. Per uiux-audit-2026-08-12.md §3.4, selecting the very
+  // first currency now adds it immediately (it becomes the base, and its
+  // rate is always fixed at 1.0 so there's nothing else to wait for). Once a
+  // base exists, subsequent picks still just stage into extraCode/extraRate
+  // — a rate has to be supplied/confirmed for those, so "＋新增" stays the
+  // explicit commit step for that case, unchanged from before.
   const onSelectExtraCode = (code: string) => {
+    if (code && draftCurrencies.length === 0) {
+      addCurrency(code, "1");
+      return;
+    }
     setExtraCode(code);
     if (code && allRates && allRates[code] !== undefined) {
       setExtraRate(String(allRates[code]));
@@ -196,8 +231,9 @@ export default function CreateTripDialog({
     }
   };
 
-  const addCurrency = () => {
-    if (!extraCode) return;
+  const addCurrency = (codeOverride?: string, rateOverride?: string) => {
+    const code = codeOverride ?? extraCode;
+    if (!code) return;
     // The very first currency added becomes the trip's base automatically
     // (there's nothing to "convert against" until one exists) — its rate is
     // always 1.0 and not user-editable, same as an existing trip's base row
@@ -206,19 +242,20 @@ export default function CreateTripDialog({
     // regular non-base row and still needs a valid rate, unchanged from
     // before.
     const willBeBase = draftCurrencies.length === 0;
-    const rateNum = parseFloat(extraRate);
+    const rateStr = rateOverride ?? extraRate;
+    const rateNum = parseFloat(rateStr);
     if (!willBeBase && (!rateNum || rateNum <= 0)) {
       setCurrencyFormError("請輸入有效的匯率");
       return;
     }
-    const option = CURATED_CURRENCIES.find((c) => c.code === extraCode);
+    const option = CURATED_CURRENCIES.find((c) => c.code === code);
     setDraftCurrencies((prev) => [
       ...prev,
       {
         id: nextDraftId.current++,
-        code: extraCode,
-        name: option?.name ?? extraCode,
-        rate: willBeBase ? "1" : extraRate,
+        code,
+        name: option?.name ?? code,
+        rate: willBeBase ? "1" : rateStr,
         isBase: willBeBase,
       },
     ]);
@@ -246,6 +283,7 @@ export default function CreateTripDialog({
   };
 
   const handleSubmit = async () => {
+    setSubmitAttempted(true);
     const newErrors: typeof errors = {};
     const trimmedName = name.trim();
     if (!trimmedName) newErrors.name = "請輸入行程名稱";
@@ -343,9 +381,9 @@ export default function CreateTripDialog({
                     type="button"
                     onClick={() => removeMember(m.id)}
                     aria-label={`移除成員 ${m.name}`}
-                    className="text-teal-500 hover:text-rose-600 leading-none"
+                    className="text-teal-500 hover:text-rose-600 leading-none inline-flex items-center"
                   >
-                    ✕
+                    <X size={13} aria-hidden="true" />
                   </button>
                 </span>
               ))}
@@ -367,9 +405,9 @@ export default function CreateTripDialog({
             <button
               type="button"
               onClick={addMember}
-              className="border border-dashed border-slate-300 text-slate-500 hover:bg-slate-50 rounded-lg px-3.5 py-2 text-xs font-semibold whitespace-nowrap"
+              className="border border-dashed border-slate-300 text-slate-500 hover:bg-slate-50 rounded-lg px-3.5 py-2 text-xs font-semibold whitespace-nowrap inline-flex items-center gap-1"
             >
-              ＋ 新增
+              <Plus size={13} aria-hidden="true" /> 新增
             </button>
           </div>
           {errors.members && <p className="text-xs text-rose-600 mt-1">{errors.members}</p>}
@@ -386,8 +424,20 @@ export default function CreateTripDialog({
             {baseDraft ? "幣別（勾選左側圓點以指定基準幣）" : "基準幣別"}
           </label>
           {!baseDraft && (
-            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-2">
-              請選擇基準幣別 — 從下方選單挑一個幣別並按「＋ 新增」，這會是這趟行程的基準幣
+            // Neutral/info guidance by default (sky, not amber/warning) — this
+            // shows the instant the dialog opens, before the user has done
+            // anything wrong, so it shouldn't look like an error (see
+            // uiux-audit-2026-08-12.md §2.4). Only flips to warning styling
+            // once the user has actually tried "建立行程" and been blocked by
+            // this exact condition — see submitAttempted's own comment above.
+            <p
+              className={`text-xs rounded-lg px-3 py-2 mb-2 border ${
+                submitAttempted
+                  ? "text-amber-700 bg-amber-50 border-amber-200"
+                  : "text-sky-700 bg-sky-50 border-sky-200"
+              }`}
+            >
+              請選擇基準幣別 — 從下方選單挑一個幣別，這會是這趟行程的基準幣
             </p>
           )}
           <div className="border border-slate-200 rounded-lg divide-y divide-slate-100 mb-2 empty:hidden">
@@ -414,11 +464,11 @@ export default function CreateTripDialog({
                 ) : (
                   <input
                     className="w-24 border border-slate-300 rounded px-1.5 py-1 text-right text-xs tabular-nums"
-                    type="number"
-                    step="0.00001"
+                    type="text"
+                    inputMode="decimal"
                     value={c.rate}
                     onChange={(e) => {
-                      const val = e.target.value;
+                      const val = filterDecimalInput(e.target.value);
                       setDraftCurrencies((prev) => prev.map((d) => (d.id === c.id ? { ...d, rate: val } : d)));
                       if (errors.currencies) setErrors((prev) => ({ ...prev, currencies: undefined }));
                     }}
@@ -429,9 +479,9 @@ export default function CreateTripDialog({
                     type="button"
                     onClick={() => removeCurrency(c.id)}
                     aria-label={`移除幣別 ${c.code}`}
-                    className="text-slate-400 hover:text-rose-600 leading-none shrink-0"
+                    className="text-slate-400 hover:text-rose-600 leading-none shrink-0 inline-flex items-center"
                   >
-                    ✕
+                    <X size={13} aria-hidden="true" />
                   </button>
                 )}
               </div>
@@ -460,21 +510,21 @@ export default function CreateTripDialog({
               <input
                 className="w-28 border border-slate-300 rounded-lg px-3 py-2 text-sm"
                 placeholder="匯率"
-                type="number"
-                step="0.00001"
+                type="text"
+                inputMode="decimal"
                 value={extraRate}
                 onChange={(e) => {
-                  setExtraRate(e.target.value);
+                  setExtraRate(filterDecimalInput(e.target.value));
                   if (currencyFormError) setCurrencyFormError(null);
                 }}
               />
             )}
             <button
               type="button"
-              onClick={addCurrency}
-              className="border border-dashed border-slate-300 text-slate-500 hover:bg-slate-50 rounded-lg px-3.5 py-2 text-xs font-semibold whitespace-nowrap"
+              onClick={() => addCurrency()}
+              className="border border-dashed border-slate-300 text-slate-500 hover:bg-slate-50 rounded-lg px-3.5 py-2 text-xs font-semibold whitespace-nowrap inline-flex items-center gap-1"
             >
-              ＋ 新增
+              <Plus size={13} aria-hidden="true" /> 新增
             </button>
           </div>
           {currencyFormError && <p className="text-xs text-rose-600 mt-1">{currencyFormError}</p>}

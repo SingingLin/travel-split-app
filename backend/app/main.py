@@ -42,12 +42,24 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 app = FastAPI(title="TravelSplit API", version="1.0.0")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
+# CORS allow-list: configurable via the ALLOWED_ORIGINS env var (comma-
+# separated origins, e.g. "https://travel-split.vercel.app,https://my.domain")
+# so the deployed backend (Render) can allow the deployed frontend (Vercel)
+# without a code change. Unset/empty ALLOWED_ORIGINS falls back to the
+# original hardcoded local-dev origins — local development behavior is
+# unchanged whether or not this env var exists.
+_allowed_origins_env = os.environ.get("ALLOWED_ORIGINS", "").strip()
+if _allowed_origins_env:
+    ALLOWED_ORIGINS = [origin.strip() for origin in _allowed_origins_env.split(",") if origin.strip()]
+else:
+    ALLOWED_ORIGINS = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
-    ],
+    ]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

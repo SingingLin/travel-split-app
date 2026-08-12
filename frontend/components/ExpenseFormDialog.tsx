@@ -21,6 +21,18 @@ import { useToast } from "@/lib/ToastContext";
 import { CURATED_CURRENCIES, formatCurrencyOption } from "@/lib/currencies";
 import type { Expense, ExpenseShareInput, ExpenseType, TripDetail } from "@/lib/types";
 
+/** Keeps only digits and at most one decimal point — replaces the native
+ * `<input type="number">`'s own filtering so a plain `type="text"` input can
+ * still only ever hold a valid decimal string, without that control's
+ * mouse-wheel-silently-changes-the-value trap (see
+ * uiux-audit-2026-08-12.md §3.2). Used by every amount/rate field below. */
+function filterDecimalInput(raw: string): string {
+  const cleaned = raw.replace(/[^0-9.]/g, "");
+  const firstDot = cleaned.indexOf(".");
+  if (firstDot === -1) return cleaned;
+  return cleaned.slice(0, firstDot + 1) + cleaned.slice(firstDot + 1).replace(/\./g, "");
+}
+
 // Name of the payment method that unlocks the "海外手續費" field — matches
 // the seeded default in backend/app/constants.py (DEFAULT_PAYMENT_METHODS);
 // user-renamed/custom payment methods simply won't match, same as any other
@@ -669,14 +681,12 @@ export default function ExpenseFormDialog({
           <div>
             <label className={labelCls}>金額</label>
             <input
-              type="number"
+              type="text"
               inputMode="decimal"
-              step="0.01"
-              min="0"
               className={`${inputCls} text-lg font-semibold tabular-nums`}
               value={amount}
               onChange={(e) => {
-                setAmount(e.target.value);
+                setAmount(filterDecimalInput(e.target.value));
                 clearError("amount");
               }}
               placeholder="0"
@@ -718,10 +728,10 @@ export default function ExpenseFormDialog({
                       <input
                         className="w-20 border border-slate-300 rounded-lg px-2 py-2 text-xs"
                         placeholder="匯率"
-                        type="number"
-                        step="0.00001"
+                        type="text"
+                        inputMode="decimal"
                         value={draftCurrencyRate}
-                        onChange={(e) => setDraftCurrencyRate(e.target.value)}
+                        onChange={(e) => setDraftCurrencyRate(filterDecimalInput(e.target.value))}
                       />
                     </div>
                   }
@@ -760,7 +770,13 @@ export default function ExpenseFormDialog({
           <div>
             <label className={labelCls}>
               這筆{expenseType === "income" ? "收入" : "支出"}使用的匯率
-              {selectedCurrency && ` (1 ${selectedCurrency.code} = ? ${trip.base_currency_code})`}
+              {/* The "(1 X = ? Y)" formula only makes sense when a real
+                  conversion is happening — when the field is locked (selected
+                  currency == base currency, so X and Y are the same code) it
+                  used to still render "(1 JPY = ? JPY)" right above copy
+                  saying the rate is fixed at 1, which read as contradictory.
+                  See uiux-audit-2026-08-12.md §2.2. */}
+              {!rateIsLocked && selectedCurrency && ` (1 ${selectedCurrency.code} = ? ${trip.base_currency_code})`}
             </label>
             {rateIsLocked ? (
               <p className="text-xs text-slate-400 border border-slate-200 bg-slate-50 rounded-lg px-3 py-2 tabular-nums">
@@ -769,14 +785,12 @@ export default function ExpenseFormDialog({
             ) : (
               <>
                 <input
-                  type="number"
+                  type="text"
                   inputMode="decimal"
-                  step="0.00001"
-                  min="0"
                   className={`${inputCls} tabular-nums`}
                   value={rateInput}
                   onChange={(e) => {
-                    setRateInput(e.target.value);
+                    setRateInput(filterDecimalInput(e.target.value));
                     clearError("rate");
                   }}
                 />
@@ -790,7 +804,7 @@ export default function ExpenseFormDialog({
               className={inputCls}
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder={expenseType === "income" ? `留空預設為「收入」` : `留空預設為「支出」`}
+              placeholder={expenseType === "income" ? `例如：飯店退款、代購收款` : `例如：晚餐、計程車、藥妝店`}
             />
           </div>
           <div>
@@ -906,14 +920,12 @@ export default function ExpenseFormDialog({
                 <div className="mt-2">
                   <label className={labelCls}>海外手續費（選填）</label>
                   <input
-                    type="number"
+                    type="text"
                     inputMode="decimal"
-                    step="0.01"
-                    min="0"
                     className={inputCls}
                     value={foreignFee}
                     onChange={(e) => {
-                      setForeignFee(e.target.value);
+                      setForeignFee(filterDecimalInput(e.target.value));
                       clearError("foreignFee");
                     }}
                     placeholder="0"
@@ -1112,13 +1124,14 @@ export default function ExpenseFormDialog({
                         </>
                       ) : (
                         <input
-                          type="number"
-                          step="0.01"
+                          type="text"
+                          inputMode="decimal"
                           disabled={!checked || splitMode === "equal"}
                           value={checked ? shareAmounts[m.id] ?? 0 : ""}
-                          onChange={(e) =>
-                            setShareAmounts((prev) => ({ ...prev, [m.id]: parseFloat(e.target.value) || 0 }))
-                          }
+                          onChange={(e) => {
+                            const filtered = filterDecimalInput(e.target.value);
+                            setShareAmounts((prev) => ({ ...prev, [m.id]: parseFloat(filtered) || 0 }));
+                          }}
                           className="w-[86px] border border-slate-300 rounded-md px-1.5 py-1 text-xs text-right tabular-nums disabled:bg-slate-50 disabled:text-slate-300"
                         />
                       )}

@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import Card from "@/components/Card";
 import ConfirmButton from "@/components/ConfirmButton";
+import { Plus } from "lucide-react";
 import { CategoryChip } from "@/components/Chip";
 import { createCategory, deleteCategory, resetCategories, updateCategory } from "@/lib/api";
 import { useToast } from "@/lib/ToastContext";
@@ -176,9 +177,9 @@ export default function CategoriesSection({
         ) : (
           <button
             onClick={() => setAdding(true)}
-            className="border border-dashed border-slate-300 rounded-full px-3 py-1 text-xs text-slate-400 font-medium"
+            className="border border-dashed border-slate-300 rounded-full px-3 py-1 text-xs text-slate-400 font-medium inline-flex items-center gap-1"
           >
-            ＋ 新增分類
+            <Plus size={12} aria-hidden="true" /> 新增分類
           </button>
         )}
       </div>

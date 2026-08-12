@@ -8,7 +8,9 @@
 ## 技術棧
 
 - **前端**：Next.js 16（App Router）+ TypeScript + Tailwind CSS v4，位於 `frontend/`
-- **後端**：Python + FastAPI + SQLite（`sqlite3` 檔案資料庫，透過 SQLAlchemy ORM），位於 `backend/`
+- **後端**：Python + FastAPI + SQLAlchemy ORM，位於 `backend/`。本機開發預設連本機 SQLite
+  檔案；設定 `DATABASE_URL` 環境變數可改連 Postgres（例如部署到雲端時接 Neon），見下方
+  「資料庫設定」。
 - 前後端透過 REST API（JSON）串接，前端用 `fetch` 呼叫後端
 
 ## 預設埠號
@@ -45,6 +47,23 @@ uvicorn app.main:app --reload --port 8000
 - 健康檢查：`curl http://localhost:8000/api/health` 應回傳 `{"status":"ok"}`。
 - API 文件（FastAPI 自動產生）：啟動後開啟 http://localhost:8000/docs。
 
+#### 資料庫設定：本機 SQLite（預設）vs 雲端 Postgres
+
+`backend/app/database.py` 依 `DATABASE_URL` 環境變數決定要連哪個資料庫：
+
+- **本機開發（預設，不用做任何事）**：沒有設定 `DATABASE_URL` 時，自動連本機檔案
+  `backend/travel_split.db`（SQLite），行為與過去完全一樣。
+- **接雲端 Postgres（例如 Neon，部署到 Render 時用）**：在 `backend/.env`（gitignored，
+  不會進版控）加一行 `DATABASE_URL=postgresql://<user>:<password>@<host>/<db>?sslmode=require`，
+  重啟後端即會改連 Postgres；`Base.metadata.create_all()`（見 `app/main.py` 啟動流程）
+  會在空的 Postgres 資料庫上自動建出完整資料表結構，不需要另外跑 migration 指令。
+  `backend/.env` 不存在或該行被註解掉時，一樣 fallback 回本機 SQLite。
+- 兩種資料庫都靠 `app/database.py` 的 `ensure_columns()` 處理「舊表補欄位」（依
+  `engine.dialect.name` 分流：SQLite 用 `PRAGMA table_info` + `ALTER TABLE ADD COLUMN`，
+  Postgres 用 `ALTER TABLE ADD COLUMN IF NOT EXISTS`），兩邊都是冪等、可重複執行。
+- 測試套件（`pytest`）固定用記憶體內 SQLite（`sqlite:///:memory:`），不受 `DATABASE_URL`
+  或 `.env` 影響，不需要連得到 Postgres 才能跑測試。
+
 #### 跑後端單元測試
 
 分帳金額四捨五入與結算演算法（誰欠誰矩陣 / 最少轉帳建議）都有對應的 pytest 測試，
@@ -71,6 +90,73 @@ npm run build && npm run start   # production build 後啟動
 
 啟動前端前，請先確認後端已在 http://localhost:8000 跑起來（前端所有資料都來自後端 API，
 沒有本地假資料）。
+
+## 部署到 Render + Vercel
+
+正式部署採「後端 Render + 前端 Vercel」分開部署。兩邊互相需要對方的網址才能設定完整，
+所以**順序很重要**，請照下面步驟走一次：
+
+> 🔒 標示「機密／環境相關資訊」的欄位，一律只在 Render／Vercel 後台的網頁表單填入，
+> **絕對不要**寫進程式碼、`render.yaml`、`README.md`，或任何會 `git commit`／`git push`
+> 的檔案。這份 repo 裡看得到的都只會是「變數名稱」，不會是實際的值。
+
+### 步驟 1：部署後端到 Render，拿到後端網址
+
+1. 到 [Render](https://render.com) 後台，選擇用這個 repo 建立新的 **Web Service**。
+   - 若用「Blueprint」方式匯入：New + → Blueprint → 選這個 repo，Render 會讀取專案根目錄
+     的 [`render.yaml`](./render.yaml) 自動帶入下方設定（見該檔案，`sync: false` 的兩個
+     環境變數會另外跳出來要你手動填）。
+   - 若手動建立 Web Service，請照 `render.yaml` 裡的設定手動填：
+     - **Root Directory**：`backend`
+     - **Build Command**：`pip install -r requirements.txt`
+     - **Start Command**：`uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+2. 在 Render 後台的「Environment」分頁，手動新增以下環境變數（**機密／環境相關資訊，
+   只在這裡填，不要寫進 git**）：
+   - `DATABASE_URL` — 你的 Postgres（例如 Neon）連線字串，格式為
+     `postgresql://<user>:<password>@<host>/<dbname>?sslmode=require`。沒設這個變數會
+     fallback 用本機檔案型 SQLite，在 Render 上**不會**在重新部署後保留資料，正式環境務必設定。
+   - `ALLOWED_ORIGINS` — 先留空或暫填 `http://localhost:3000` 佔位即可，等步驟 3 拿到
+     Vercel 網址後回頭在步驟 4 補上真正的值。
+3. 部署完成後，Render 會給一個網址，例如 `https://travel-split-backend.onrender.com`。
+   用瀏覽器打開 `<這個網址>/api/health` 確認回傳 `{"status":"ok"}`，代表後端部署成功。
+   **記下這個網址**，下一步會用到。
+
+### 步驟 2：把後端網址設進 Vercel 環境變數，部署前端
+
+1. 到 [Vercel](https://vercel.com) 後台，用這個 repo 建立新的 Project。
+   - **Root Directory** 設定為 `frontend`（Vercel 對 Next.js 專案通常會自動偵測
+     build/start 指令，即 `frontend/package.json` 裡的 `next build`／`next start`，
+     不需要額外設定檔）。
+2. 在 Vercel 後台的「Environment Variables」設定以下變數（**環境相關資訊，只在這裡填，
+   不要寫進 git**）：
+   - `NEXT_PUBLIC_API_BASE_URL` — 填步驟 1 拿到的 Render 後端網址（例如
+     `https://travel-split-backend.onrender.com`，注意不要有結尾斜線）。
+3. 部署完成後，Vercel 會給一個網址，例如 `https://travel-split-app.vercel.app`（或你設定
+   的自訂網域）。**記下這個網址**，下一步會用到。
+
+### 步驟 3：回頭把前端網址加進後端的 ALLOWED_ORIGINS，重新部署後端
+
+1. 回到 Render 後台，把步驟 1 的 `ALLOWED_ORIGINS` 環境變數改成步驟 2 拿到的 Vercel 網址
+   （見 `backend/app/main.py`，逗號分隔可填多個來源，例如同時保留自訂網域跟
+   `*.vercel.app` 網址）：
+   ```
+   https://travel-split-app.vercel.app
+   ```
+   若之後又加了自訂網域，用逗號串接多個網址即可，例如：
+   ```
+   https://travel-split-app.vercel.app,https://travelsplit.example.com
+   ```
+2. 儲存後 Render 會自動重新部署後端（或手動觸發 Manual Deploy）。重新部署完成後，
+   從正式的 Vercel 前端網址實際操作一次（例如建立行程、新增支出），確認能正常呼叫到
+   後端 API、沒有瀏覽器主控台的 CORS 錯誤，代表兩邊部署設定完整串接成功。
+
+### 小結：哪些是機密／環境相關資訊
+
+| 變數 | 設定位置 | 說明 |
+|---|---|---|
+| `DATABASE_URL` | Render 後台「Environment」 | 🔒 機密，含資料庫密碼，絕不寫進 git |
+| `ALLOWED_ORIGINS` | Render 後台「Environment」 | 環境相關（依 Vercel 網址而定），不寫進 git |
+| `NEXT_PUBLIC_API_BASE_URL` | Vercel 後台「Environment Variables」 | 環境相關（依 Render 網址而定），不寫進 git |
 
 ## 專案結構
 

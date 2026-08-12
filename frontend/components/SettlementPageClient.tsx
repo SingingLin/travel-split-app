@@ -3,10 +3,11 @@
 import { useEffect, useState } from "react";
 import { useTrip } from "@/lib/TripContext";
 import { getSettlement, getSettlementByCurrency } from "@/lib/api";
-import type { CategoryBreakdownItem, Member, MemberSettlement, NativeSettlement, Settlement, TransferSuggestion } from "@/lib/types";
+import type { CategoryBreakdownItem, DebtCell, Member, MemberSettlement, NativeSettlement, Settlement, TransferSuggestion } from "@/lib/types";
 import Avatar from "@/components/Avatar";
 import Card from "@/components/Card";
 import { formatMoney, formatSignedMoney } from "@/lib/format";
+import { ChevronDown, ChevronRight, Info } from "lucide-react";
 
 function MemberSummaryCard({ member, currency }: { member: MemberSettlement; currency: string | null }) {
   return (
@@ -31,16 +32,27 @@ function MemberSummaryCard({ member, currency }: { member: MemberSettlement; cur
           {formatMoney(member.total_paid, currency ?? undefined)}
         </b>
       </div>
+      {/* Three-way tone, not just >=0/<0 — a net of exactly 0 means "already
+          settled", a neutral state, not "money to collect" (see
+          uiux-audit-2026-08-12.md §2.1: the old member.net >= 0 check lumped
+          0 in with the "應收"/emerald/"+" treatment, which misleadingly
+          implied there was still something to collect). Matches
+          TransferList's own zero-state copy ("帳目已平衡，無需轉帳") below on
+          this same page so the two don't read as built by different people. */}
       <div className="mt-2.5 pt-2.5 border-t border-slate-100 flex items-baseline gap-1.5">
         <span
           className={`text-xl md:text-2xl font-bold tabular-nums ${
-            member.net >= 0 ? "text-emerald-600" : "text-rose-600"
+            member.net > 0 ? "text-emerald-600" : member.net < 0 ? "text-rose-600" : "text-slate-500"
           }`}
         >
-          {formatSignedMoney(member.net, currency ?? undefined)}
+          {member.net === 0 ? formatMoney(0, currency ?? undefined) : formatSignedMoney(member.net, currency ?? undefined)}
         </span>
-        <span className={`text-[11px] font-semibold ${member.net >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
-          {member.net >= 0 ? "應收" : "應付"}
+        <span
+          className={`text-[11px] font-semibold ${
+            member.net > 0 ? "text-emerald-600" : member.net < 0 ? "text-rose-600" : "text-slate-400"
+          }`}
+        >
+          {member.net > 0 ? "應收" : member.net < 0 ? "應付" : "已結清"}
         </span>
       </div>
     </Card>
@@ -182,6 +194,47 @@ function ModeSegmentedControl({ mode, onChange }: { mode: SettlementMode; onChan
   );
 }
 
+/** 簡化前的原始欠款明細（settlement.matrix）— 「已簡化為 N 筆轉帳」拿掉「誰欠誰
+ * 矩陣」後，想核對簡化結果的人（通常是 3 人以上、金流關係較複雜的行程）沒有管道
+ * 看到原始欠款關係，只能自己重新回想每一筆支出去驗算。見
+ * uiux-audit-2026-08-12.md §3.5：不需要恢復完整矩陣表格，只要一個可展開/收合的
+ * 清單就夠，格式比照下方 TransferCard 的 from → to / amount 呈現方式。matrix 為
+ * 空陣列（沒有欠款關係）時不顯示這個展開連結。 */
+function RawDebtDetails({ matrix, memberById, currency }: { matrix: DebtCell[]; memberById: Map<number, Member>; currency: string | null }) {
+  const [expanded, setExpanded] = useState(false);
+  if (matrix.length === 0) return null;
+  return (
+    <div className="mt-3.5 pt-3.5 border-t border-slate-100">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="text-xs font-medium text-slate-500 hover:text-slate-700 inline-flex items-center gap-1"
+      >
+        查看簡化前明細
+        {expanded ? <ChevronDown size={13} aria-hidden="true" /> : <ChevronRight size={13} aria-hidden="true" />}
+      </button>
+      {expanded && (
+        <div className="flex flex-col gap-1.5 mt-2.5">
+          {matrix.map((cell, i) => {
+            const debtor = memberById.get(cell.debtor_id);
+            const creditor = memberById.get(cell.creditor_id);
+            return (
+              <div key={i} className="flex items-center justify-between text-xs text-slate-500 px-2.5 py-1.5 bg-slate-50 rounded-lg">
+                <span>
+                  {debtor?.name ?? "？"} 欠 {creditor?.name ?? "？"}
+                </span>
+                <span className="tabular-nums font-medium text-slate-700">
+                  {formatMoney(cell.amount, currency ?? undefined)}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TransferSuggestionCard({
   settlement,
   currency,
@@ -209,6 +262,7 @@ function TransferSuggestionCard({
         checkedTransfers={checkedTransfers}
         onToggleTransfer={onToggleTransfer}
       />
+      <RawDebtDetails matrix={settlement.matrix} memberById={memberById} currency={currency} />
     </Card>
   );
 }
@@ -244,7 +298,15 @@ function BudgetSummaryBar({
           <>
             <div className="h-9 w-px bg-slate-100 self-center hidden sm:block" />
             <div>
-              <p className="text-[11.5px] text-slate-500 mb-0.5">初始金額</p>
+              <p className="text-[11.5px] text-slate-500 mb-0.5 inline-flex items-center gap-1">
+                初始金額
+                {/* 「初始金額」＝設定頁「初始換匯紀錄」的「換入金額」欄位，兩處是同一個數字
+                    但用詞不一致（見 uiux-audit-2026-08-12.md §2.3）。低成本方案：不全站
+                    改名，只在這裡加一個原生 title tooltip 說明對應關係。 */}
+                <span title="即設定頁「初始換匯紀錄」中填寫的換入金額" className="inline-flex cursor-help">
+                  <Info size={12} className="text-slate-300" aria-hidden="true" />
+                </span>
+              </p>
               <p className="text-lg font-semibold tabular-nums text-slate-700">
                 {formatMoney(initialAmountDisplay, currency ?? undefined)}
               </p>

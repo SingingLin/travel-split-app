@@ -12,6 +12,7 @@ import { formatDate, formatMoney } from "@/lib/format";
 import ExpenseFormDialog from "@/components/ExpenseFormDialog";
 import ConfirmButton from "@/components/ConfirmButton";
 import Dialog from "@/components/Dialog";
+import { ChevronDown, Paperclip, Plus, Trash2 } from "lucide-react";
 
 interface Filters {
   date_from: string;
@@ -107,7 +108,15 @@ export default function ExpensesPageClient({ tripId }: { tripId: number }) {
   // className string. `w-full` happened to win, so every desktop filter
   // control silently stretched to the row's full width and wrapped onto its
   // own line — hence this dedicated class with no width baked in at all.
-  const desktopFilterInputCls = "border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-600";
+  // focus:border/ring added so this row's date/select/search controls (incl.
+  // the native <input type="date"> filters) share the same focus treatment
+  // as every other custom input in the app (e.g. ExpenseFormDialog's
+  // inputCls) — previously this class was the one place that native date
+  // input's *box* actually already matched visually, but silently lacked
+  // the focus ring the rest of the app's inputs have (see
+  // uiux-audit-2026-08-12.md §1.1).
+  const desktopFilterInputCls =
+    "border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-600 focus:border-teal-500 focus:ring-2 focus:ring-teal-100 outline-none";
 
   return (
     <div className="relative">
@@ -125,11 +134,11 @@ export default function ExpensesPageClient({ tripId }: { tripId: number }) {
               aria-disabled={!hasMembers}
               className={
                 hasMembers
-                  ? "bg-teal-600 hover:bg-teal-700 text-white rounded-lg px-4 py-2.5 text-sm font-medium shadow-sm"
-                  : "bg-slate-200 text-slate-400 cursor-not-allowed rounded-lg px-4 py-2.5 text-sm font-medium"
+                  ? "bg-teal-600 hover:bg-teal-700 text-white rounded-lg px-4 py-2.5 text-sm font-medium shadow-sm inline-flex items-center gap-1"
+                  : "bg-slate-200 text-slate-400 cursor-not-allowed rounded-lg px-4 py-2.5 text-sm font-medium inline-flex items-center gap-1"
               }
             >
-              ＋ 新增支出
+              <Plus size={15} aria-hidden="true" /> 新增支出
             </button>
           </div>
         </div>
@@ -221,8 +230,8 @@ export default function ExpensesPageClient({ tripId }: { tripId: number }) {
                         <span>{e.name}</span>
                         <ExpenseTypeBadge type={e.type} compact />
                         {e.image_url && (
-                          <span title="這筆有附圖" aria-label="這筆有附圖" className="text-slate-400 text-xs">
-                            📎
+                          <span title="這筆有附圖" aria-label="這筆有附圖" className="text-slate-400 inline-flex items-center">
+                            <Paperclip size={12} aria-hidden="true" />
                           </span>
                         )}
                       </div>
@@ -294,9 +303,9 @@ export default function ExpensesPageClient({ tripId }: { tripId: number }) {
         <div className="flex items-center gap-2 mb-3">
           <button
             onClick={() => setFilterSheetOpen(true)}
-            className="bg-white border border-slate-300 text-slate-600 rounded-lg px-3 py-1.5 text-[11.5px] font-medium"
+            className="bg-white border border-slate-300 text-slate-600 rounded-lg px-3 py-1.5 text-[11.5px] font-medium inline-flex items-center gap-1"
           >
-            篩選 ▾
+            篩選 <ChevronDown size={13} aria-hidden="true" />
           </button>
           <span className="text-[11.5px] text-slate-400">
             共 {expenses?.length ?? 0} 筆・合計 {formatMoney(total, trip.base_currency_code)}
@@ -340,8 +349,12 @@ export default function ExpensesPageClient({ tripId }: { tripId: number }) {
                       <span className="truncate">{e.name}</span>
                       <ExpenseTypeBadge type={e.type} compact />
                       {e.image_url && (
-                        <span title="這筆有附圖" aria-label="這筆有附圖" className="text-slate-400 text-[11px] shrink-0">
-                          📎
+                        <span
+                          title="這筆有附圖"
+                          aria-label="這筆有附圖"
+                          className="text-slate-400 shrink-0 inline-flex items-center"
+                        >
+                          <Paperclip size={11} aria-hidden="true" />
                         </span>
                       )}
                     </span>
@@ -369,9 +382,9 @@ export default function ExpensesPageClient({ tripId }: { tripId: number }) {
                   <ConfirmButton
                     message={`確定要刪除「${e.name}」這筆支出嗎？`}
                     onConfirm={() => handleDelete(e.id)}
-                    className="w-7 h-7 rounded-full bg-white border border-slate-200 text-slate-400 hover:text-rose-600 hover:border-rose-200 flex items-center justify-center text-xs"
+                    className="w-7 h-7 rounded-full bg-white border border-slate-200 text-slate-400 hover:text-rose-600 hover:border-rose-200 flex items-center justify-center"
                   >
-                    🗑
+                    <Trash2 size={13} aria-hidden="true" />
                   </ConfirmButton>
                 </div>
               </div>
@@ -389,11 +402,11 @@ export default function ExpensesPageClient({ tripId }: { tripId: number }) {
           aria-label="新增支出"
           title={!hasMembers ? "請先到行程設定新增成員" : undefined}
           aria-disabled={!hasMembers}
-          className={`fixed bottom-20 right-4 w-14 h-14 rounded-full shadow-lg text-2xl flex items-center justify-center z-20 ${
+          className={`fixed bottom-20 right-4 w-14 h-14 rounded-full shadow-lg flex items-center justify-center z-20 ${
             hasMembers ? "bg-teal-600 text-white" : "bg-slate-300 text-slate-500"
           }`}
         >
-          ＋
+          <Plus size={24} aria-hidden="true" />
         </button>
       </div>
 
@@ -402,7 +415,7 @@ export default function ExpensesPageClient({ tripId }: { tripId: number }) {
           <div>
             <label className="block text-[11.5px] font-medium text-slate-500 mb-1">分類</label>
             <select
-              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:border-teal-500 focus:ring-2 focus:ring-teal-100 outline-none"
               value={filters.category_id}
               onChange={(e) => setFilters((f) => ({ ...f, category_id: e.target.value }))}
             >
@@ -417,7 +430,7 @@ export default function ExpensesPageClient({ tripId }: { tripId: number }) {
           <div>
             <label className="block text-[11.5px] font-medium text-slate-500 mb-1">付款人</label>
             <select
-              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:border-teal-500 focus:ring-2 focus:ring-teal-100 outline-none"
               value={filters.payer_id}
               onChange={(e) => setFilters((f) => ({ ...f, payer_id: e.target.value }))}
             >
@@ -434,7 +447,7 @@ export default function ExpensesPageClient({ tripId }: { tripId: number }) {
               <label className="block text-[11.5px] font-medium text-slate-500 mb-1">起始日期</label>
               <input
                 type="date"
-                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:border-teal-500 focus:ring-2 focus:ring-teal-100 outline-none"
                 value={filters.date_from}
                 onChange={(e) => setFilters((f) => ({ ...f, date_from: e.target.value }))}
               />
@@ -443,7 +456,7 @@ export default function ExpensesPageClient({ tripId }: { tripId: number }) {
               <label className="block text-[11.5px] font-medium text-slate-500 mb-1">結束日期</label>
               <input
                 type="date"
-                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:border-teal-500 focus:ring-2 focus:ring-teal-100 outline-none"
                 value={filters.date_to}
                 onChange={(e) => setFilters((f) => ({ ...f, date_to: e.target.value }))}
               />
@@ -452,7 +465,7 @@ export default function ExpensesPageClient({ tripId }: { tripId: number }) {
           <div>
             <label className="block text-[11.5px] font-medium text-slate-500 mb-1">搜尋項目名稱</label>
             <input
-              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:border-teal-500 focus:ring-2 focus:ring-teal-100 outline-none"
               value={filters.search}
               onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))}
             />

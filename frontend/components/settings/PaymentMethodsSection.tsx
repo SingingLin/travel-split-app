@@ -3,10 +3,20 @@
 import { useRef, useState } from "react";
 import Card from "@/components/Card";
 import ConfirmButton from "@/components/ConfirmButton";
+import { Plus } from "lucide-react";
 import { NeutralChip } from "@/components/Chip";
 import { createPaymentMethod, deletePaymentMethod, resetPaymentMethods, updatePaymentMethod } from "@/lib/api";
 import { useToast } from "@/lib/ToastContext";
 import type { PaymentMethod, TripDetail } from "@/lib/types";
+
+// Matches CREDIT_CARD_PAYMENT_METHOD_NAME in ExpenseFormDialog.tsx — that
+// component's "海外手續費" field is only shown while the selected payment
+// method's name is exactly this string (a short-term, name-based check, not
+// a real "is this a credit card" flag — see its own comment). Deleting or
+// renaming the built-in "信用卡" entry here silently makes that field
+// disappear with no other signal, so this component warns about it via toast
+// (see remove/commitEdit below) — see uiux-audit-2026-08-12.md §3.3.
+const CREDIT_CARD_PAYMENT_METHOD_NAME = "信用卡";
 
 export default function PaymentMethodsSection({
   trip,
@@ -56,6 +66,9 @@ export default function PaymentMethodsSection({
       await deletePaymentMethod(id);
       onChanged();
       showToast(`已刪除付款方式「${name}」`);
+      if (name === CREDIT_CARD_PAYMENT_METHOD_NAME) {
+        showToast("這會影響新增支出表單的「海外手續費」欄位，該欄位僅在付款方式為「信用卡」時顯示", "error");
+      }
     } catch (e) {
       showToast(e instanceof Error ? e.message : "刪除付款方式失敗", "error");
     }
@@ -81,6 +94,9 @@ export default function PaymentMethodsSection({
       await updatePaymentMethod(pm.id, trimmed);
       onChanged();
       showToast(`已更新付款方式「${trimmed}」`);
+      if (pm.name === CREDIT_CARD_PAYMENT_METHOD_NAME) {
+        showToast("這會影響新增支出表單的「海外手續費」欄位，該欄位僅在付款方式為「信用卡」時顯示", "error");
+      }
     } catch (e) {
       showToast(e instanceof Error ? e.message : "更新付款方式失敗", "error");
     } finally {
@@ -162,9 +178,9 @@ export default function PaymentMethodsSection({
         ) : (
           <button
             onClick={() => setAdding(true)}
-            className="border border-dashed border-slate-300 rounded-full px-3 py-1 text-xs text-slate-400 font-medium"
+            className="border border-dashed border-slate-300 rounded-full px-3 py-1 text-xs text-slate-400 font-medium inline-flex items-center gap-1"
           >
-            ＋ 新增付款方式
+            <Plus size={12} aria-hidden="true" /> 新增付款方式
           </button>
         )}
       </div>

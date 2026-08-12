@@ -7,6 +7,7 @@ import type { TripSummary } from "@/lib/types";
 import TripCard from "@/components/TripCard";
 import CreateTripDialog from "@/components/CreateTripDialog";
 import BrandMark from "@/components/BrandMark";
+import { getTripBandColor } from "@/lib/tripColors";
 
 export default function HomePage() {
   const [trips, setTrips] = useState<TripSummary[] | null>(null);
@@ -77,8 +78,8 @@ export default function HomePage() {
           <>
             {/* Desktop grid */}
             <div className="hidden md:grid grid-cols-2 lg:grid-cols-3 gap-4">
-              {trips.map((trip) => (
-                <TripCard key={trip.id} trip={trip} onDeleted={load} />
+              {trips.map((trip, i) => (
+                <TripCard key={trip.id} trip={trip} bandColor={getTripBandColor(i)} onDeleted={load} />
               ))}
               <button
                 onClick={() => setDialogOpen(true)}
@@ -93,8 +94,8 @@ export default function HomePage() {
 
             {/* Mobile list */}
             <div className="md:hidden flex flex-col gap-3">
-              {trips.map((trip) => (
-                <TripCard key={trip.id} trip={trip} onDeleted={load} />
+              {trips.map((trip, i) => (
+                <TripCard key={trip.id} trip={trip} bandColor={getTripBandColor(i)} onDeleted={load} />
               ))}
             </div>
             <p className="md:hidden text-center text-xs text-slate-400 mt-4">
