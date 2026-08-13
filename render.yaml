@@ -19,6 +19,17 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:
+      # Pin the Python version Render builds with to match local dev
+      # (backend/.venv is 3.11.15). Without this, Render defaults to
+      # whatever its newest supported version is (as of writing that can be
+      # too new for some pinned deps, e.g. pydantic-core==2.9.2 in
+      # requirements.txt has no prebuilt wheel yet for very new Python
+      # releases, forcing a from-source build via maturin/Rust that fails in
+      # Render's read-only build sandbox). See backend/.python-version for
+      # the file-based equivalent of this same pin. Not secret — safe to
+      # commit. Official docs: https://render.com/docs/python-version
+      - key: PYTHON_VERSION
+        value: 3.11.15
       # Neon (or any other) Postgres connection string, e.g.
       # postgresql://user:pass@host/dbname?sslmode=require — see
       # backend/app/database.py. Leaving this unset makes the service fall
