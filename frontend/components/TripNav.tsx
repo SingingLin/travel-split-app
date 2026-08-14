@@ -1,11 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { ReactNode } from "react";
-import { ArrowLeft, Receipt, Scale, Settings, type LucideIcon } from "lucide-react";
+import { Receipt, Scale, Settings, type LucideIcon } from "lucide-react";
 import { AvatarStack } from "./Avatar";
-import BrandMark from "./BrandMark";
+import UserMenu from "./UserMenu";
+import GuestBanner from "./GuestBanner";
+import MobileTripDrawer from "./MobileTripDrawer";
 import type { TripDetail } from "@/lib/types";
 
 // Emoji (📒/⚖️/⚙️) replaced with lucide-react icons — emoji render with
@@ -26,6 +28,16 @@ function activeKey(pathname: string, tripId: number): string {
   return "expenses";
 }
 
+/** A "contributor" (guest — see backend models.TripAccess's docstring) may
+ * only record new expenses and view the settlement overview (this round's
+ * "訪客也能是完整成員" simplification) — the entire "設定" tab is off-limits,
+ * so its nav entry is hidden outright rather than just left to 403 after a
+ * click. See components/SettingsPageClient.tsx for the matching
+ * direct-URL guard. */
+function tabsForRole(role: string) {
+  return role === "contributor" ? TABS.filter((t) => t.key !== "settings") : TABS;
+}
+
 export default function TripNav({
   trip,
   mobileTitle,
@@ -36,24 +48,23 @@ export default function TripNav({
   mobileRight?: ReactNode;
 }) {
   const pathname = usePathname();
-  const router = useRouter();
   const active = activeKey(pathname, trip.id);
+  const tabs = tabsForRole(trip.my_role);
   const defaultMobileTitle =
     active === "settings" ? "行程設定" : active === "settlement" ? "結算總覽" : trip.name;
 
   return (
     <>
-      {/* Desktop top nav */}
+      {/* Desktop top nav — no brand mark/wordmark here: the persistent left
+          sidebar (components/TripSidebar.tsx, always mounted alongside this
+          nav on desktop) already shows "TravelSplit" once at the very top;
+          repeating it here just duplicated it right next to the trip name
+          (real-user feedback via screenshot). */}
       <header className="hidden lg:flex items-center justify-between px-8 py-3 border-b border-slate-200 bg-white sticky top-0 z-30">
         <div className="flex items-center gap-6">
-          <Link href="/" className="flex items-center gap-2">
-            <BrandMark />
-            <span className="font-bold text-slate-900">TravelSplit</span>
-          </Link>
-          <span className="text-slate-300">/</span>
           <span className="font-semibold text-slate-800">{trip.name}</span>
           <nav className="flex items-center gap-1 bg-slate-100 rounded-full p-1 ml-2">
-            {TABS.map((tab) => (
+            {tabs.map((tab) => (
               <Link
                 key={tab.key}
                 href={tab.href(trip.id)}
@@ -66,33 +77,40 @@ export default function TripNav({
             ))}
           </nav>
         </div>
-        <AvatarStack members={trip.members} size="sm" max={6} />
+        <div className="flex items-center gap-4">
+          <UserMenu />
+          <AvatarStack members={trip.members} size="sm" max={6} />
+        </div>
       </header>
+      <div className="hidden lg:block sticky top-[49px] z-20">
+        <GuestBanner />
+      </div>
 
       {/* Mobile sticky header */}
       <header className="lg:hidden flex items-center justify-between gap-3 px-4 py-3 border-b border-slate-200 bg-white sticky top-0 z-30">
-        <div className="flex items-center gap-3 min-w-0">
-          <button
-            onClick={() => router.push("/")}
-            aria-label="返回首頁"
-            className="w-7 h-7 rounded-lg bg-slate-100 text-slate-600 flex items-center justify-center shrink-0"
-          >
-            <ArrowLeft size={15} aria-hidden="true" />
-          </button>
+        <div className="flex items-center gap-2 min-w-0">
+          <MobileTripDrawer activeTripId={trip.id} />
           <span className="font-bold text-slate-900 text-[15px] truncate">{mobileTitle ?? defaultMobileTitle}</span>
         </div>
-        {mobileRight}
+        <div className="flex items-center gap-2">
+          <UserMenu />
+          {mobileRight}
+        </div>
       </header>
+      <div className="lg:hidden sticky top-[53px] z-20">
+        <GuestBanner />
+      </div>
     </>
   );
 }
 
-export function BottomTabBar({ tripId }: { tripId: number }) {
+export function BottomTabBar({ tripId, myRole }: { tripId: number; myRole?: string }) {
   const pathname = usePathname();
   const active = activeKey(pathname, tripId);
+  const tabs = tabsForRole(myRole ?? "");
   return (
     <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-30 flex border-t border-slate-200 bg-white">
-      {TABS.map((tab) => {
+      {tabs.map((tab) => {
         const Icon = tab.icon;
         return (
           <Link
