@@ -40,6 +40,31 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
 ```
 
+#### 排查：專案資料夾改名/搬移後 `.venv` 指令失效
+
+`backend/.venv` 是用**建立當下**這個專案資料夾的絕對路徑建出來的——`.venv/bin/activate`、
+`.venv/bin/pip`、`.venv/bin/python` 等腳本的 shebang（檔案開頭那行 `#!/path/to/...`）內部都
+寫死了那個絕對路徑。如果之後把這個專案資料夾**改名或搬移**到別的路徑，這個虛擬環境內的
+指令就會找不到自己原本的直譯器，典型錯誤訊息長得像：
+
+```
+bad interpreter: /原本的/舊路徑/backend/.venv/bin/python3.11: no such file or directory
+```
+
+**這不是符號連結不穩定的問題**，單純是虛擬環境內部腳本的路徑寫死在建立當下的資料夾位置
+——虛擬環境本來就沒有「跟著資料夾一起搬」這種機制。解法是刪除重建，不需要也不建議嘗試修
+內部路徑：
+
+```bash
+rm -rf backend/.venv
+~/.local/bin/python3.11 -m venv backend/.venv
+source backend/.venv/bin/activate
+pip install -r backend/requirements.txt
+```
+
+（`~/.local/bin/python3.11` 請視你機器上實際可用的 3.11+ 直譯器路徑調整，跟上面「需要
+Python 3.11+」那段的說明一致。）
+
 - SQLite 資料庫檔案 `backend/travel_split.db` 會在**第一次啟動時自動建立**（`app/main.py`
   啟動時呼叫 `Base.metadata.create_all`），不需要另外跑 migration 指令。
 - 若要重置資料，直接刪除 `backend/travel_split.db`（連同 `-journal` 檔，如果有的話）再重啟
@@ -117,6 +142,11 @@ npm run build && npm run start   # production build 後啟動
      fallback 用本機檔案型 SQLite，在 Render 上**不會**在重新部署後保留資料，正式環境務必設定。
    - `ALLOWED_ORIGINS` — 先留空或暫填 `http://localhost:3000` 佔位即可，等步驟 3 拿到
      Vercel 網址後回頭在步驟 4 補上真正的值。
+   - `APP_JWT_SECRET` 🔒🔴 —（`render.yaml` 沒有預先列出這個變數，需自己手動新增）
+     這個服務簽發／驗證登入 JWT 用的密鑰（見 `backend/app/auth.py`）。**必須跟步驟 2
+     要填在 Vercel 的 `APP_JWT_SECRET` 完全一模一樣**，兩邊只要有一個字元不同，前端登入
+     看起來會成功，但每個 API 請求都會被這個後端擋 401——建議在這裡先產生一組隨機值
+     （例如 `openssl rand -base64 32`），記下來，等一下原封不動貼到 Vercel 那邊。
 3. 部署完成後，Render 會給一個網址，例如 `https://travel-split-backend.onrender.com`。
    用瀏覽器打開 `<這個網址>/api/health` 確認回傳 `{"status":"ok"}`，代表後端部署成功。
    **記下這個網址**，下一步會用到。
@@ -131,6 +161,18 @@ npm run build && npm run start   # production build 後啟動
    不要寫進 git**）：
    - `NEXT_PUBLIC_API_BASE_URL` — 填步驟 1 拿到的 Render 後端網址（例如
      `https://travel-split-backend.onrender.com`，注意不要有結尾斜線）。
+   - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` — Google 登入用的 OAuth 用戶端憑證。到
+     [Google Cloud Console](https://console.cloud.google.com/apis/credentials) 建立一組
+     「網頁應用程式」類型的 OAuth 用戶端，**已授權的重新導向 URI**填
+     `https://<你的 Vercel 網址>/api/auth/callback/google`（NextAuth 固定格式）。
+   - `AUTH_SECRET` — NextAuth（Auth.js）自己內部用來加密 session cookie 的密鑰，跟下面的
+     `APP_JWT_SECRET`是完全不同用途、不同值的東西，不要搞混。用
+     `openssl rand -base64 32` 產生一組隨機值即可。
+   - `APP_JWT_SECRET` 🔒🔴 **一定要跟步驟 1 幫 Render 後端設定的 `APP_JWT_SECRET` 完全
+     一模一樣**——這是前端簽發、後端驗證的共用密鑰（見 `backend/app/auth.py` 與
+     `frontend/auth.ts`），兩邊只要有一個字元不同，前端登入看起來會成功，但**每一個 API
+     請求都會被後端擋 401**，行為會很像「登入卻進不去」，很容易誤以為是別的問題。把步驟
+     1 在 Render 那邊填的同一個值，原封不動複製貼到這裡。
 3. 部署完成後，Vercel 會給一個網址，例如 `https://travel-split-app.vercel.app`（或你設定
    的自訂網域）。**記下這個網址**，下一步會用到。
 
@@ -156,7 +198,10 @@ npm run build && npm run start   # production build 後啟動
 |---|---|---|
 | `DATABASE_URL` | Render 後台「Environment」 | 🔒 機密，含資料庫密碼，絕不寫進 git |
 | `ALLOWED_ORIGINS` | Render 後台「Environment」 | 環境相關（依 Vercel 網址而定），不寫進 git |
+| `APP_JWT_SECRET` | Render **與** Vercel 後台都要設 | 🔒🔴 機密，且**兩邊必須填完全相同的值**——前端簽發、後端驗證登入 JWT 用的共用密鑰，見上方步驟 1、2 的說明，這是最容易漏看導致「前後端對不上」的一項 |
 | `NEXT_PUBLIC_API_BASE_URL` | Vercel 後台「Environment Variables」 | 環境相關（依 Render 網址而定），不寫進 git |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Vercel 後台「Environment Variables」 | 🔒 機密，Google 登入用的 OAuth 用戶端憑證 |
+| `AUTH_SECRET` | Vercel 後台「Environment Variables」 | 🔒 機密，NextAuth 自己內部的 session 加密密鑰，跟 `APP_JWT_SECRET` 是不同東西，不要搞混 |
 
 ## 專案結構
 
