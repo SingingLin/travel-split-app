@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Dialog from "./Dialog";
 import Button from "./Button";
 import Avatar from "./Avatar";
+import Select from "./Select";
 import {
   createExpense,
   splitPreview,
@@ -163,6 +164,15 @@ export default function ExpenseFormDialog({
 }) {
   const { showToast } = useToast();
   const isEdit = !!expense;
+  // A "contributor" (guest — see backend models.TripAccess's docstring) may
+  // only create a brand-new expense using the trip's EXISTING payer/currency
+  // /category/payment-method options — every "＋ 新增…" quick-add flow below
+  // ultimately calls a create* endpoint gated by require_edit_access, which
+  // 403s a contributor (see backend app/auth.py check_edit_access). Those
+  // options used to still render for a contributor and only fail after the
+  // click; this hides them from the dropdown entirely instead, since
+  // there's nothing a contributor can actually do with them.
+  const canQuickAdd = trip.my_role !== "contributor";
   const baseCurrency = trip.currencies.find((c) => c.is_base) ?? trip.currencies[0];
   // Splitting a single-member trip's expense across "everyone" is a no-op —
   // per user feedback, don't even show the toggle in that case (forced off).
@@ -712,19 +722,13 @@ export default function ExpenseFormDialog({
                   error={addError}
                   extra={
                     <div className="flex gap-1.5">
-                      <select
-                        autoFocus
-                        className={`${inputCls} flex-1`}
+                      <Select
+                        className="flex-1"
                         value={draftCurrencyCode}
-                        onChange={(e) => onSelectDraftCurrencyCode(e.target.value)}
-                      >
-                        <option value="">選擇幣別…</option>
-                        {currencyOptionsForAdd.map((c) => (
-                          <option key={c.code} value={c.code}>
-                            {formatCurrencyOption(c)}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={onSelectDraftCurrencyCode}
+                        placeholder="選擇幣別…"
+                        options={currencyOptionsForAdd.map((c) => ({ value: c.code, label: formatCurrencyOption(c) }))}
+                      />
                       <input
                         className="w-20 border border-slate-300 rounded-lg px-2 py-2 text-xs"
                         placeholder="匯率"
@@ -738,12 +742,11 @@ export default function ExpenseFormDialog({
                 />
               ) : (
                 <>
-                  <select
-                    className={inputCls}
-                    value={currencyId}
-                    onChange={(e) => {
-                      if (e.target.value === "__add__") return startAdd("currency");
-                      const nextId = Number(e.target.value);
+                  <Select
+                    value={String(currencyId)}
+                    onChange={(v) => {
+                      if (v === "__add__") return startAdd("currency");
+                      const nextId = Number(v);
                       setCurrencyId(nextId);
                       clearError("currencyId");
                       // Reset the rate to the newly-picked currency's own
@@ -754,14 +757,11 @@ export default function ExpenseFormDialog({
                       setRateInput(defaultRateForCurrency(nextCurrency));
                       clearError("rate");
                     }}
-                  >
-                    {trip.currencies.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.code} {c.name}
-                      </option>
-                    ))}
-                    <option value="__add__">＋ 新增幣別…</option>
-                  </select>
+                    options={[
+                      ...trip.currencies.map((c) => ({ value: String(c.id), label: `${c.code} ${c.name}` })),
+                      ...(canQuickAdd ? [{ value: "__add__", label: "＋ 新增幣別…" }] : []),
+                    ]}
+                  />
                   {errors.currencyId && <p className="text-xs text-rose-600 mt-1">{errors.currencyId}</p>}
                 </>
               )}
@@ -824,22 +824,18 @@ export default function ExpenseFormDialog({
               // the extra CategoryChip that used to sit next to it just
               // duplicated that (same name/color) with no added information,
               // per user feedback it was redundant.
-              <select
-                className={inputCls}
-                value={categoryId ?? ""}
-                onChange={(e) => {
-                  if (e.target.value === "__add__") return startAdd("category");
-                  setCategoryId(e.target.value ? Number(e.target.value) : null);
+              <Select
+                value={categoryId != null ? String(categoryId) : ""}
+                onChange={(v) => {
+                  if (v === "__add__") return startAdd("category");
+                  setCategoryId(v ? Number(v) : null);
                 }}
-              >
-                <option value="">未分類</option>
-                {trip.categories.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-                <option value="__add__">＋ 新增分類…</option>
-              </select>
+                options={[
+                  { value: "", label: "未分類" },
+                  ...trip.categories.map((c) => ({ value: String(c.id), label: c.name })),
+                  ...(canQuickAdd ? [{ value: "__add__", label: "＋ 新增分類…" }] : []),
+                ]}
+              />
             )}
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -857,22 +853,18 @@ export default function ExpenseFormDialog({
                 />
               ) : (
                 <>
-                  <select
-                    className={inputCls}
-                    value={payerId}
-                    onChange={(e) => {
-                      if (e.target.value === "__add__") return startAdd("payer");
-                      setPayerId(Number(e.target.value));
+                  <Select
+                    value={String(payerId)}
+                    onChange={(v) => {
+                      if (v === "__add__") return startAdd("payer");
+                      setPayerId(Number(v));
                       clearError("payerId");
                     }}
-                  >
-                    {trip.members.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.name}
-                      </option>
-                    ))}
-                    <option value="__add__">＋ 新增{payerLabel}…</option>
-                  </select>
+                    options={[
+                      ...trip.members.map((m) => ({ value: String(m.id), label: m.name })),
+                      ...(canQuickAdd ? [{ value: "__add__", label: `＋ 新增${payerLabel}…` }] : []),
+                    ]}
+                  />
                   {errors.payerId && <p className="text-xs text-rose-600 mt-1">{errors.payerId}</p>}
                 </>
               )}
@@ -890,12 +882,11 @@ export default function ExpenseFormDialog({
                   error={addError}
                 />
               ) : (
-                <select
-                  className={inputCls}
-                  value={paymentMethodId ?? ""}
-                  onChange={(e) => {
-                    if (e.target.value === "__add__") return startAdd("paymentMethod");
-                    const nextId = e.target.value ? Number(e.target.value) : null;
+                <Select
+                  value={paymentMethodId != null ? String(paymentMethodId) : ""}
+                  onChange={(v) => {
+                    if (v === "__add__") return startAdd("paymentMethod");
+                    const nextId = v ? Number(v) : null;
                     setPaymentMethodId(nextId);
                     // Clear any typed foreign fee when switching away from
                     // 信用卡 so a stale fee never silently survives onto a
@@ -906,15 +897,12 @@ export default function ExpenseFormDialog({
                       clearError("foreignFee");
                     }
                   }}
-                >
-                  <option value="">未指定</option>
-                  {trip.payment_methods.map((pm) => (
-                    <option key={pm.id} value={pm.id}>
-                      {pm.name}
-                    </option>
-                  ))}
-                  <option value="__add__">＋ 新增付款方式…</option>
-                </select>
+                  options={[
+                    { value: "", label: "未指定" },
+                    ...trip.payment_methods.map((pm) => ({ value: String(pm.id), label: pm.name })),
+                    ...(canQuickAdd ? [{ value: "__add__", label: "＋ 新增付款方式…" }] : []),
+                  ]}
+                />
               )}
               {isCreditCard && (
                 <div className="mt-2">
@@ -1085,7 +1073,7 @@ export default function ExpenseFormDialog({
                         onChange={() => toggleMember(m.id)}
                         className="w-4 h-4 accent-teal-600 shrink-0"
                       />
-                      <Avatar name={m.name} color={m.color} size="sm" />
+                      <Avatar name={m.name} color={m.color} avatarUrl={m.avatar_url} size="sm" />
                       <span className={`text-[12.5px] flex-1 ${checked ? "text-slate-700" : "text-slate-400"}`}>
                         {m.name}
                         {!checked && "（未參與）"}

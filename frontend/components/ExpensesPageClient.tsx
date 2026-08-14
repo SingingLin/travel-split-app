@@ -12,6 +12,7 @@ import { formatDate, formatMoney } from "@/lib/format";
 import ExpenseFormDialog from "@/components/ExpenseFormDialog";
 import ConfirmButton from "@/components/ConfirmButton";
 import Dialog from "@/components/Dialog";
+import Select from "@/components/Select";
 import { ChevronDown, Paperclip, Plus, Trash2 } from "lucide-react";
 
 interface Filters {
@@ -69,8 +70,22 @@ export default function ExpensesPageClient({ tripId }: { tripId: number }) {
   // auto-create any members). Covers trips reached via a direct URL or old
   // trips created before the settings-first onboarding flow existed.
   const hasMembers = trip.members.length > 0;
+  // "唯讀" gating — the backend is the real permission boundary
+  // (require_edit_access rejects every write for a viewer), this is just
+  // hiding the main "新增支出" entry point so a viewer never clicks
+  // something that was always going to 403. See lib/types.ts
+  // TripDetail.my_role's docstring.
+  const isViewer = trip.my_role === "viewer";
+  // A "contributor" (guest — see backend models.TripAccess's docstring) is
+  // this round's new middle ground: unlike a viewer, they CAN add a new
+  // expense (require_expense_create_access's one carve-out), but — like a
+  // viewer — every per-row 編輯/刪除 on an EXISTING expense still 403s
+  // (require_edit_access), so those controls hide for a contributor too,
+  // just not the "新增支出" entry point itself.
+  const canEditExisting = trip.my_role === "owner" || trip.my_role === "editor";
 
   const openCreate = () => {
+    if (isViewer) return;
     if (!hasMembers) {
       router.push(`/trips/${tripId}/settings`);
       return;
@@ -125,9 +140,10 @@ export default function ExpensesPageClient({ tripId }: { tripId: number }) {
         <div className="flex items-center justify-between mb-4">
           <p className="text-2xl font-bold text-slate-900">支出記帳</p>
           <div className="flex items-center gap-2.5">
-            {!hasMembers && (
+            {!hasMembers && !isViewer && (
               <span className="text-xs text-amber-600">此行程尚無成員，請先到設定新增成員</span>
             )}
+            {!isViewer && (
             <button
               onClick={openCreate}
               title={!hasMembers ? "請先到行程設定新增成員" : undefined}
@@ -140,34 +156,33 @@ export default function ExpensesPageClient({ tripId }: { tripId: number }) {
             >
               <Plus size={15} aria-hidden="true" /> 新增支出
             </button>
+            )}
           </div>
         </div>
 
         <div className="flex items-center gap-2 mb-3.5">
-          <select
-            className={desktopFilterInputCls + " w-28 shrink-0"}
+          <Select
+            className="w-28 shrink-0"
+            size="sm"
             value={filters.category_id}
-            onChange={(e) => setFilters((f) => ({ ...f, category_id: e.target.value }))}
-          >
-            <option value="">全部分類</option>
-            {trip.categories.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-          <select
-            className={desktopFilterInputCls + " w-28 shrink-0"}
+            onChange={(v) => setFilters((f) => ({ ...f, category_id: v }))}
+            placeholder="全部分類"
+            options={[
+              { value: "", label: "全部分類" },
+              ...trip.categories.map((c) => ({ value: String(c.id), label: c.name })),
+            ]}
+          />
+          <Select
+            className="w-28 shrink-0"
+            size="sm"
             value={filters.payer_id}
-            onChange={(e) => setFilters((f) => ({ ...f, payer_id: e.target.value }))}
-          >
-            <option value="">全部付款人</option>
-            {trip.members.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name}
-              </option>
-            ))}
-          </select>
+            onChange={(v) => setFilters((f) => ({ ...f, payer_id: v }))}
+            placeholder="全部付款人"
+            options={[
+              { value: "", label: "全部付款人" },
+              ...trip.members.map((m) => ({ value: String(m.id), label: m.name })),
+            ]}
+          />
           <input
             type="date"
             className={desktopFilterInputCls + " w-[136px] shrink-0"}
@@ -254,7 +269,7 @@ export default function ExpensesPageClient({ tripId }: { tripId: number }) {
                     </td>
                     <td className="px-3 py-2.5">
                       <div className="flex items-center gap-1.5">
-                        {payer && <Avatar name={payer.name} color={payer.color} size="xs" />}
+                        {payer && <Avatar name={payer.name} color={payer.color} avatarUrl={payer.avatar_url} size="xs" />}
                         {payer?.name}
                       </div>
                     </td>
@@ -270,18 +285,20 @@ export default function ExpensesPageClient({ tripId }: { tripId: number }) {
                       {e.note || "-"}
                     </td>
                     <td className="px-3 py-2.5">
-                      <div className="opacity-0 group-hover:opacity-100 flex items-center gap-2 justify-end">
-                        <button onClick={() => openEdit(e)} className="text-xs text-slate-500 hover:text-teal-600">
-                          編輯
-                        </button>
-                        <ConfirmButton
-                          message={`確定要刪除「${e.name}」這筆支出嗎？`}
-                          onConfirm={() => handleDelete(e.id)}
-                          className="text-xs text-rose-500 hover:text-rose-700"
-                        >
-                          刪除
-                        </ConfirmButton>
-                      </div>
+                      {canEditExisting && (
+                        <div className="opacity-0 group-hover:opacity-100 flex items-center gap-2 justify-end">
+                          <button onClick={() => openEdit(e)} className="text-xs text-slate-500 hover:text-teal-600">
+                            編輯
+                          </button>
+                          <ConfirmButton
+                            message={`確定要刪除「${e.name}」這筆支出嗎？`}
+                            onConfirm={() => handleDelete(e.id)}
+                            className="text-xs text-rose-500 hover:text-rose-700"
+                          >
+                            刪除
+                          </ConfirmButton>
+                        </div>
+                      )}
                     </td>
                   </tr>
                 );
@@ -312,7 +329,7 @@ export default function ExpensesPageClient({ tripId }: { tripId: number }) {
           </span>
         </div>
 
-        {!hasMembers && (
+        {!hasMembers && !isViewer && (
           <button
             type="button"
             onClick={() => router.push(`/trips/${tripId}/settings`)}
@@ -340,8 +357,9 @@ export default function ExpensesPageClient({ tripId }: { tripId: number }) {
               <div key={e.id} className="relative bg-white border border-slate-200 rounded-[10px]">
                 <button
                   type="button"
-                  onClick={() => openEdit(e)}
-                  className="w-full text-left px-3.5 py-2.5"
+                  onClick={() => canEditExisting && openEdit(e)}
+                  aria-disabled={!canEditExisting}
+                  className={`w-full text-left px-3.5 py-2.5 ${!canEditExisting ? "cursor-default" : ""}`}
                 >
                   <div className="flex items-center justify-between mb-1 pr-7">
                     <span className="text-[13.5px] font-semibold text-slate-900 flex items-center gap-1.5 min-w-0">
@@ -370,7 +388,7 @@ export default function ExpensesPageClient({ tripId }: { tripId: number }) {
                   <div className="flex items-center gap-1.5 text-[11px] text-slate-500">
                     <span>{formatDate(e.date)}</span>
                     <span>·</span>
-                    {payer && <Avatar name={payer.name} color={payer.color} size="xs" />}
+                    {payer && <Avatar name={payer.name} color={payer.color} avatarUrl={payer.avatar_url} size="xs" />}
                     <SplitStatusBadge
                       needsSplit={e.needs_split}
                       participantCount={e.shares.length}
@@ -378,25 +396,28 @@ export default function ExpensesPageClient({ tripId }: { tripId: number }) {
                     />
                   </div>
                 </button>
-                <div className="absolute top-2 right-2" onClick={(ev) => ev.stopPropagation()}>
-                  <ConfirmButton
-                    message={`確定要刪除「${e.name}」這筆支出嗎？`}
-                    onConfirm={() => handleDelete(e.id)}
-                    className="w-7 h-7 rounded-full bg-white border border-slate-200 text-slate-400 hover:text-rose-600 hover:border-rose-200 flex items-center justify-center"
-                  >
-                    <Trash2 size={13} aria-hidden="true" />
-                  </ConfirmButton>
-                </div>
+                {canEditExisting && (
+                  <div className="absolute top-2 right-2" onClick={(ev) => ev.stopPropagation()}>
+                    <ConfirmButton
+                      message={`確定要刪除「${e.name}」這筆支出嗎？`}
+                      onConfirm={() => handleDelete(e.id)}
+                      className="w-7 h-7 rounded-full bg-white border border-slate-200 text-slate-400 hover:text-rose-600 hover:border-rose-200 flex items-center justify-center"
+                    >
+                      <Trash2 size={13} aria-hidden="true" />
+                    </ConfirmButton>
+                  </div>
+                )}
               </div>
             );
           })}
           {expenses && expenses.length === 0 && (
             <p className="text-center text-slate-400 text-sm py-10">
-              尚無支出紀錄，點右下角「＋」開始記帳
+              尚無支出紀錄{!isViewer && "，點右下角「＋」開始記帳"}
             </p>
           )}
         </div>
 
+        {!isViewer && (
         <button
           onClick={openCreate}
           aria-label="新增支出"
@@ -408,39 +429,34 @@ export default function ExpensesPageClient({ tripId }: { tripId: number }) {
         >
           <Plus size={24} aria-hidden="true" />
         </button>
+        )}
       </div>
 
       <Dialog open={filterSheetOpen} onClose={() => setFilterSheetOpen(false)} title="篩選">
         <div className="space-y-3">
           <div>
             <label className="block text-[11.5px] font-medium text-slate-500 mb-1">分類</label>
-            <select
-              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:border-teal-500 focus:ring-2 focus:ring-teal-100 outline-none"
+            <Select
               value={filters.category_id}
-              onChange={(e) => setFilters((f) => ({ ...f, category_id: e.target.value }))}
-            >
-              <option value="">全部分類</option>
-              {trip.categories.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
+              onChange={(v) => setFilters((f) => ({ ...f, category_id: v }))}
+              placeholder="全部分類"
+              options={[
+                { value: "", label: "全部分類" },
+                ...trip.categories.map((c) => ({ value: String(c.id), label: c.name })),
+              ]}
+            />
           </div>
           <div>
             <label className="block text-[11.5px] font-medium text-slate-500 mb-1">付款人</label>
-            <select
-              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:border-teal-500 focus:ring-2 focus:ring-teal-100 outline-none"
+            <Select
               value={filters.payer_id}
-              onChange={(e) => setFilters((f) => ({ ...f, payer_id: e.target.value }))}
-            >
-              <option value="">全部付款人</option>
-              {trip.members.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}
-                </option>
-              ))}
-            </select>
+              onChange={(v) => setFilters((f) => ({ ...f, payer_id: v }))}
+              placeholder="全部付款人"
+              options={[
+                { value: "", label: "全部付款人" },
+                ...trip.members.map((m) => ({ value: String(m.id), label: m.name })),
+              ]}
+            />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>

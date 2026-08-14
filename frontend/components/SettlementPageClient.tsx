@@ -3,29 +3,88 @@
 import { useEffect, useState } from "react";
 import { useTrip } from "@/lib/TripContext";
 import { getSettlement, getSettlementByCurrency } from "@/lib/api";
-import type { CategoryBreakdownItem, DebtCell, Member, MemberSettlement, NativeSettlement, Settlement, TransferSuggestion } from "@/lib/types";
+import type {
+  CategoryBreakdownItem,
+  DebtCell,
+  Member,
+  MemberSettlement,
+  NativeSettlement,
+  Settlement,
+  TransferSuggestion,
+  TripDetail,
+} from "@/lib/types";
 import Avatar from "@/components/Avatar";
 import Card from "@/components/Card";
 import { formatMoney, formatSignedMoney } from "@/lib/format";
-import { ChevronDown, ChevronRight, Info } from "lucide-react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 
-function MemberSummaryCard({ member, currency }: { member: MemberSettlement; currency: string | null }) {
+/** This member's own "換了多少" (initial_exchange_to_amount, in whatever
+ * currency they exchanged into), converted into the currently-selected
+ * display `currency` via this trip's live currency rate table — same
+ * conversion approach the old trip-wide BudgetSummaryBar used. Returns null
+ * (hide the comparison entirely) when this member never filled in their own
+ * exchange record, or when its to-currency isn't one of this trip's tracked
+ * currencies. */
+function memberBudgetDisplay(member: Member, trip: TripDetail, currency: string | null): number | null {
+  if (member.initial_exchange_to_amount == null || !member.initial_exchange_to_currency) return null;
+  const fromCur = trip.currencies.find((c) => c.code === member.initial_exchange_to_currency);
+  const toCur = trip.currencies.find((c) => c.code === currency);
+  if (!fromCur || !toCur) return null;
+  return (member.initial_exchange_to_amount * fromCur.rate_to_base) / toCur.rate_to_base;
+}
+
+function MemberSummaryCard({
+  member,
+  currency,
+  budgetAmount,
+  avatarUrl,
+}: {
+  member: MemberSettlement;
+  currency: string | null;
+  /** This member's own "換了多少" already converted to `currency` — see
+   * memberBudgetDisplay above. null hides the whole 換了多少／剩多少 block
+   * (member never filled in their own exchange record), same "沒填就不顯示"
+   * behavior the old trip-wide version had. */
+  budgetAmount?: number | null;
+  /** This member's Google avatar (see Member.avatar_url) — MemberSettlement
+   * itself (the settlement API's own response shape) has no user-link info
+   * at all, so callers look this up from their own `memberById` (built from
+   * `trip.members`, the full Member list) and pass it through explicitly. */
+  avatarUrl?: string | null;
+}) {
+  const remaining = budgetAmount != null ? budgetAmount - member.total_owed : null;
   return (
     <Card className="p-4 md:p-[18px]">
       <div className="flex items-center gap-2 mb-3">
-        <Avatar name={member.name} color={member.color} size="md" />
+        <Avatar name={member.name} color={member.color} avatarUrl={avatarUrl} size="md" />
         <span className="text-sm font-semibold text-slate-900">{member.name}</span>
       </div>
+      {budgetAmount != null && (
+        <div className="flex justify-between text-xs text-slate-500 mb-1">
+          <span>換了多少</span>
+          <b className="text-slate-700 font-semibold tabular-nums">
+            {formatMoney(budgetAmount, currency ?? undefined)}
+          </b>
+        </div>
+      )}
       {/* total_owed = 這個人這趟旅行分攤到、該花的總額 = 個人總花費（見
           backend SettlementOut.trip_total_spend 的關係：所有成員 total_owed
           加總 = trip_total_spend）。標籤直接叫「個人總花費」，不再用內部
           記帳用語「應分攤總額」，避免使用者要多轉譯一次。 */}
       <div className="flex justify-between text-xs text-slate-500 mb-1">
-        <span>個人總花費</span>
+        <span>{budgetAmount != null ? "該花多少（個人總花費）" : "個人總花費"}</span>
         <b className="text-slate-700 font-semibold tabular-nums">
           {formatMoney(member.total_owed, currency ?? undefined)}
         </b>
       </div>
+      {remaining != null && (
+        <div className="flex justify-between text-xs text-slate-500 mb-1">
+          <span>剩多少</span>
+          <b className={`font-semibold tabular-nums ${remaining >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+            {formatMoney(remaining, currency ?? undefined)}
+          </b>
+        </div>
+      )}
       <div className="flex justify-between text-xs text-slate-500 mb-1">
         <span>實際支付總額</span>
         <b className="text-slate-700 font-semibold tabular-nums">
@@ -89,12 +148,12 @@ function TransferCard({
         aria-label={`標記 ${from?.name ?? ""} → ${to?.name ?? ""} 已轉帳`}
         className="w-4 h-4 accent-teal-600 rounded shrink-0 cursor-pointer"
       />
-      {from && <Avatar name={from.name} color={from.color} size="sm" />}
+      {from && <Avatar name={from.name} color={from.color} avatarUrl={from.avatar_url} size="sm" />}
       <span className={`text-[13px] font-semibold ${checked ? "text-slate-400 line-through" : "text-slate-800"}`}>
         {from?.name}
       </span>
       <span className="text-slate-400">→</span>
-      {to && <Avatar name={to.name} color={to.color} size="sm" />}
+      {to && <Avatar name={to.name} color={to.color} avatarUrl={to.avatar_url} size="sm" />}
       <span className={`text-[13px] font-semibold ${checked ? "text-slate-400 line-through" : "text-slate-800"}`}>
         {to?.name}
       </span>
@@ -267,63 +326,23 @@ function TransferSuggestionCard({
   );
 }
 
-/** 頁面最上方的「旅程總花費」／「初始金額」／「剩餘」對比列 — 只在「統一換算」
- * 模式顯示（依原幣別分開模式下不同幣別金額不能直接相加，沒有一個有意義的
- * 合計數字可比較）。initialAmountDisplay 是「初始換匯」紀錄的換入金額
- * （trip.initial_exchange_to_amount），已經換算到目前選定幣別後的數字
- * （見 SettlementPageClient 的換算邏輯），沒填這筆換匯紀錄則只顯示旅程總花費。 */
-function BudgetSummaryBar({
-  tripTotalSpend,
-  initialAmountDisplay,
-  currency,
-}: {
-  tripTotalSpend: number;
-  initialAmountDisplay: number | null;
-  currency: string | null;
-}) {
-  const remaining = initialAmountDisplay != null ? initialAmountDisplay - tripTotalSpend : null;
+/** 頁面最上方的「旅程總花費」列 — 只在「統一換算」模式顯示（依原幣別分開模式下
+ * 不同幣別金額不能直接相加，沒有一個有意義的合計數字可比較）。「初始金額／剩餘」
+ * 的對比不再放在這裡：換匯紀錄現在是逐人填寫（見 backend models.Member 的
+ * initial_exchange_* 欄位／components/settings/PeopleSection.tsx 的每人換匯
+ * 面板），所以改成整合進下方每張 MemberSummaryCard，各自比較「這個人換了多少」
+ * 對「這個人該花多少」，而不是拿整趟行程的合計去比一筆已經不存在的行程層級換匯
+ * 紀錄。 */
+function TripTotalSpendBar({ tripTotalSpend, currency }: { tripTotalSpend: number; currency: string | null }) {
   return (
     <Card className="mb-5">
-      <div className="flex flex-wrap items-baseline gap-x-8 gap-y-3">
-        <div>
-          <p className="text-[11.5px] text-slate-500 mb-0.5">旅程總花費</p>
-          {/* text-xl md:text-2xl font-bold tabular-nums = 同一份「金額（強調）」
-              字級規格，MemberSummaryCard 的淨額大字也是這組 class，全站強調
-              金額一致，不再另外開一個 26px 的一次性尺寸。 */}
-          <p className="text-xl md:text-2xl font-bold tabular-nums text-slate-900">
-            {formatMoney(tripTotalSpend, currency ?? undefined)}
-          </p>
-        </div>
-        {initialAmountDisplay != null && remaining != null && (
-          <>
-            <div className="h-9 w-px bg-slate-100 self-center hidden sm:block" />
-            <div>
-              <p className="text-[11.5px] text-slate-500 mb-0.5 inline-flex items-center gap-1">
-                初始金額
-                {/* 「初始金額」＝設定頁「初始換匯紀錄」的「換入金額」欄位，兩處是同一個數字
-                    但用詞不一致（見 uiux-audit-2026-08-12.md §2.3）。低成本方案：不全站
-                    改名，只在這裡加一個原生 title tooltip 說明對應關係。 */}
-                <span title="即設定頁「初始換匯紀錄」中填寫的換入金額" className="inline-flex cursor-help">
-                  <Info size={12} className="text-slate-300" aria-hidden="true" />
-                </span>
-              </p>
-              <p className="text-lg font-semibold tabular-nums text-slate-700">
-                {formatMoney(initialAmountDisplay, currency ?? undefined)}
-              </p>
-            </div>
-            <div>
-              <p className="text-[11.5px] text-slate-500 mb-0.5">剩餘</p>
-              <p
-                className={`text-lg font-semibold tabular-nums ${
-                  remaining >= 0 ? "text-emerald-600" : "text-rose-600"
-                }`}
-              >
-                {formatMoney(remaining, currency ?? undefined)}
-              </p>
-            </div>
-          </>
-        )}
-      </div>
+      <p className="text-[11.5px] text-slate-500 mb-0.5">旅程總花費</p>
+      {/* text-xl md:text-2xl font-bold tabular-nums = 同一份「金額（強調）」
+          字級規格，MemberSummaryCard 的淨額大字也是這組 class，全站強調
+          金額一致，不再另外開一個 26px 的一次性尺寸。 */}
+      <p className="text-xl md:text-2xl font-bold tabular-nums text-slate-900">
+        {formatMoney(tripTotalSpend, currency ?? undefined)}
+      </p>
     </Card>
   );
 }
@@ -445,26 +464,13 @@ export default function SettlementPageClient({ tripId }: { tripId: number }) {
   const memberById = new Map(trip.members.map((m) => [m.id, m]));
   const currencyCodes = trip.currencies.map((c) => c.code);
 
-  // "初始金額" now comes from the initial-exchange record's *to* amount
-  // (trip.initial_exchange_to_amount — the currency the user actually
-  // carried while traveling), not the legacy trip.initial_budget. It's
-  // denominated in trip.initial_exchange_to_currency, which is independent
-  // of both the trip's base currency and this record's own
-  // initial_exchange_rate (that rate is just the user's personal memo of
-  // what they actually got at the exchange booth). To compare against
-  // trip_total_spend (already in the currently-selected display currency),
-  // convert via this trip's live `currencies` rate table like every other
-  // amount in the app: amount_in_code * rate_to_base = amount_in_base, then
-  // / selectedCurrency.rate_to_base to reach the display currency. Only
-  // resolvable when initial_exchange_to_currency matches one of this trip's
-  // tracked currencies; otherwise (or when the record was never filled in)
-  // the comparison stays hidden, same as the old initial_budget behavior.
-  const selectedCurrency = trip.currencies.find((c) => c.code === currency);
-  const initialAmountCurrency = trip.currencies.find((c) => c.code === trip.initial_exchange_to_currency);
-  const initialAmountDisplay =
-    trip.initial_exchange_to_amount != null && initialAmountCurrency && selectedCurrency
-      ? (trip.initial_exchange_to_amount * initialAmountCurrency.rate_to_base) / selectedCurrency.rate_to_base
-      : null;
+  // Per-member "換了多少" (see models.Member.initial_exchange_* / models.
+  // Trip's docstring for why this moved off the trip level) — a lookup by
+  // member_id so both settlement modes' MemberSummaryCard grids below can
+  // pull each member's own converted amount without recomputing it inline.
+  const memberBudgetById = new Map(
+    trip.members.map((m) => [m.id, memberBudgetDisplay(m, trip, currency)])
+  );
 
   return (
     <div>
@@ -482,15 +488,17 @@ export default function SettlementPageClient({ tripId }: { tripId: number }) {
 
         {mode === "unified" && (
           <>
-            <BudgetSummaryBar
-              tripTotalSpend={settlement?.trip_total_spend ?? 0}
-              initialAmountDisplay={initialAmountDisplay}
-              currency={currency}
-            />
+            <TripTotalSpendBar tripTotalSpend={settlement?.trip_total_spend ?? 0} currency={currency} />
 
             <div className="grid grid-cols-3 gap-3.5 mb-5">
               {settlement?.members.map((m) => (
-                <MemberSummaryCard key={m.member_id} member={m} currency={currency} />
+                <MemberSummaryCard
+                  key={m.member_id}
+                  member={m}
+                  currency={currency}
+                  budgetAmount={memberBudgetById.get(m.member_id)}
+                  avatarUrl={memberById.get(m.member_id)?.avatar_url}
+                />
               ))}
             </div>
 
@@ -527,9 +535,18 @@ export default function SettlementPageClient({ tripId }: { tripId: number }) {
                   </span>
                 </div>
                 <div className="grid grid-cols-3 gap-3.5 mb-3.5">
-                  {s.members.map((m) => (
-                    <MemberSummaryCard key={m.member_id} member={m} currency={s.currency_code} />
-                  ))}
+                  {s.members.map((m) => {
+                    const member = memberById.get(m.member_id);
+                    return (
+                      <MemberSummaryCard
+                        key={m.member_id}
+                        member={m}
+                        currency={s.currency_code}
+                        budgetAmount={member ? memberBudgetDisplay(member, trip, s.currency_code) : null}
+                        avatarUrl={member?.avatar_url}
+                      />
+                    );
+                  })}
                 </div>
                 <div className="max-w-xl">
                   <TransferSuggestionCard
@@ -560,11 +577,7 @@ export default function SettlementPageClient({ tripId }: { tripId: number }) {
             <div className="flex justify-center mb-3.5">
               <CurrencySegmentedControl codes={currencyCodes} currency={currency} onChange={setCurrency} />
             </div>
-            <BudgetSummaryBar
-              tripTotalSpend={settlement?.trip_total_spend ?? 0}
-              initialAmountDisplay={initialAmountDisplay}
-              currency={currency}
-            />
+            <TripTotalSpendBar tripTotalSpend={settlement?.trip_total_spend ?? 0} currency={currency} />
             {/* "明細" tab (誰欠誰矩陣的手機敘述式版本) removed along with the
                 matrix — down to 2 tabs now, "建議轉帳" is still worth its own
                 tab since it has its own checklist interaction. */}
@@ -588,7 +601,13 @@ export default function SettlementPageClient({ tripId }: { tripId: number }) {
             {mobileTab === "overview" && (
               <div className="flex flex-col gap-2.5">
                 {settlement?.members.map((m) => (
-                  <MemberSummaryCard key={m.member_id} member={m} currency={currency} />
+                  <MemberSummaryCard
+                    key={m.member_id}
+                    member={m}
+                    currency={currency}
+                    budgetAmount={memberBudgetById.get(m.member_id)}
+                    avatarUrl={memberById.get(m.member_id)?.avatar_url}
+                  />
                 ))}
                 {settlement && <CategoryPieChart items={settlement.category_breakdown} currency={currency} />}
               </div>
@@ -622,9 +641,18 @@ export default function SettlementPageClient({ tripId }: { tripId: number }) {
                   </span>
                 </div>
                 <div className="flex flex-col gap-2 mb-2.5">
-                  {s.members.map((m) => (
-                    <MemberSummaryCard key={m.member_id} member={m} currency={s.currency_code} />
-                  ))}
+                  {s.members.map((m) => {
+                    const member = memberById.get(m.member_id);
+                    return (
+                      <MemberSummaryCard
+                        key={m.member_id}
+                        member={m}
+                        currency={s.currency_code}
+                        budgetAmount={member ? memberBudgetDisplay(member, trip, s.currency_code) : null}
+                        avatarUrl={member?.avatar_url}
+                      />
+                    );
+                  })}
                 </div>
                 <p className="text-[11px] font-semibold text-slate-600 mb-1.5">
                   建議轉帳（已簡化為 {s.suggested_transfers.length} 筆）
