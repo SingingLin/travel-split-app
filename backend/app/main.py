@@ -4,7 +4,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.database import BASE_DIR, Base, engine, ensure_columns
+from app.database import (
+    BASE_DIR,
+    Base,
+    backfill_role_member_to_editor,
+    engine,
+    ensure_columns,
+    ensure_unique_index,
+)
+from app.routers import auth as auth_router
 from app.routers import categories, currencies, expenses, members, payment_methods, settlement, trips, uploads
 
 # Local single-file SQLite DB: create tables on startup if they don't exist yet.
@@ -31,8 +39,64 @@ ensure_columns(
         "initial_exchange_to_currency TEXT",
         "initial_exchange_to_amount REAL",
         "initial_exchange_rate REAL",
+        "invite_code TEXT",
     ],
 )
+# invite_code needs to be unique but SQLite's ADD COLUMN above can't attach a
+# UNIQUE constraint inline (see ensure_columns/ensure_unique_index
+# docstrings) — added as a separate index right after the column itself.
+ensure_unique_index("trips", "ix_trips_invite_code", "invite_code")
+
+# users.is_guest (see models.User docstring / routers/auth.py) — backfills
+# every pre-existing User row (all real Google logins so far) to
+# is_guest=False via this column's SQLite-level DEFAULT.
+ensure_columns("users", ["is_guest BOOLEAN NOT NULL DEFAULT 0"])
+
+# users.recovery_code — RETIRED (see models.User docstring): used to back
+# the guest "找回代碼" recovery flow, removed by this round's guest
+# simplification (a guest identity no longer has any recoverable "account").
+# Column + its unique index are kept in place (dead, never written to for a
+# new row) rather than migrated away, per this project's "舊欄位保留閒置"
+# convention.
+ensure_columns("users", ["recovery_code TEXT"])
+ensure_unique_index("users", "ix_users_recovery_code", "recovery_code")
+
+# members.user_id (see models.Member docstring) — optional link from a
+# split-accounting Member to the User/login identity it corresponds to.
+# Every pre-existing Member row backfills to NULL (nullable, no default),
+# which is exactly correct: they predate this feature, so there's nothing to
+# link them to automatically. Must run after the "users" table itself is
+# guaranteed to exist (create_all() above already creates it before any of
+# these ensure_columns calls run) since this column REFERENCES users(id).
+ensure_columns("members", ["user_id INTEGER REFERENCES users(id) ON DELETE SET NULL"])
+
+# members.initial_exchange_* (see models.Member docstring) — per-person
+# "初始換匯" record, moved here from being trip-wide only (Trip.
+# initial_exchange_* above stays in place, unused, per this project's
+# no-migration-tooling policy). Every pre-existing Member row backfills to
+# NULL for all five, which is correct: nobody had per-person exchange data
+# before this feature existed.
+ensure_columns(
+    "members",
+    [
+        "initial_exchange_from_currency TEXT",
+        "initial_exchange_from_amount REAL",
+        "initial_exchange_to_currency TEXT",
+        "initial_exchange_to_amount REAL",
+        "initial_exchange_rate REAL",
+    ],
+)
+
+# One-time DATA content update (not a schema change — trip_access.role's
+# column shape is unchanged) for the "擁有者／可編輯／唯讀" role rename: every
+# pre-existing role='member' row becomes role='editor', same permissions,
+# just a clearer name (see database.py backfill_role_member_to_editor's
+# docstring and models.TripAccess's docstring for the full rationale).
+# Idempotent — logs how many rows it actually touched purely for visibility;
+# 0 on every startup after the first is expected and fine.
+_migrated_member_roles = backfill_role_member_to_editor()
+if _migrated_member_roles:
+    print(f"[startup] migrated {_migrated_member_roles} trip_access row(s) from role='member' to role='editor'")
 
 # backend/uploads/ holds user-uploaded expense receipt images (see
 # routers/uploads.py) — not committed to git (see backend/.gitignore),
@@ -65,6 +129,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth_router.router)
 app.include_router(trips.router)
 app.include_router(members.router)
 app.include_router(currencies.router)

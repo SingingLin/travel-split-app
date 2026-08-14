@@ -54,6 +54,26 @@ app.dependency_overrides[get_db] = _override_get_db
 client = TestClient(app)
 
 
+def _auth_headers(email: str = "rate-regression-tester@example.com") -> dict:
+    """This module's trips/currencies/members/expenses calls all go through
+    routes now protected by app.auth.get_current_user /
+    app.auth.require_trip_access (see app/routers/trips.py,
+    app/routers/currencies.py, etc.) — every request in this file needs a
+    valid JWT. Uses the real app.auth.create_access_token/APP_JWT_SECRET so
+    this doesn't hardcode a second copy of the signing logic; the token's
+    `sub` doesn't need to correspond to an existing User row (get_current_user
+    upserts by email on first use, same as in production)."""
+    from app import auth
+
+    token = auth.create_access_token(
+        type("_FakeUser", (), {"id": 0, "email": email, "name": "Rate Regression Tester"})()
+    )
+    return {"Authorization": f"Bearer {token}"}
+
+
+AUTH = _auth_headers()
+
+
 @pytest.fixture()
 def trip_setup():
     """A trip with three currencies (base TWD + JPY + USD, same shape as the
@@ -63,6 +83,7 @@ def trip_setup():
     trip = client.post(
         "/api/trips",
         json={"name": "Rate Regression Trip", "base_currency_code": "TWD"},
+        headers=AUTH,
     ).json()
     trip_id = trip["id"]
     base_currency_id = next(c["id"] for c in trip["currencies"] if c["is_base"])
@@ -70,12 +91,14 @@ def trip_setup():
     jpy = client.post(
         f"/api/trips/{trip_id}/currencies",
         json={"code": "JPY", "name": "日圓", "rate_to_base": 0.2033693},
+        headers=AUTH,
     ).json()
     usd = client.post(
         f"/api/trips/{trip_id}/currencies",
         json={"code": "USD", "name": "美元", "rate_to_base": 32.23207091},
+        headers=AUTH,
     ).json()
-    member = client.post(f"/api/trips/{trip_id}/members", json={"name": "Alice"}).json()
+    member = client.post(f"/api/trips/{trip_id}/members", json={"name": "Alice"}, headers=AUTH).json()
 
     return {
         "trip_id": trip_id,
@@ -101,6 +124,7 @@ def _create_expense(trip_id, member_id, currency_id, amount, rate_override, fore
             "shares": [],
             "type": "expense",
         },
+        headers=AUTH,
     )
 
 
@@ -177,6 +201,7 @@ def test_update_expense_switching_currency_uses_new_currencys_own_rate(trip_setu
     updated = client.put(
         f"/api/trips/{trip_id}/expenses/{expense_id}",
         json={"currency_id": usd["id"], "rate_override": usd["rate_to_base"]},
+        headers=AUTH,
     ).json()
     assert updated["currency_id"] == usd["id"]
     assert updated["rate_snapshot"] == pytest.approx(32.23207091)
@@ -187,6 +212,7 @@ def test_update_expense_switching_currency_uses_new_currencys_own_rate(trip_setu
     updated2 = client.put(
         f"/api/trips/{trip_id}/expenses/{expense_id}",
         json={"currency_id": base_id, "rate_override": 1.0},
+        headers=AUTH,
     ).json()
     assert updated2["rate_snapshot"] == 1.0
     assert updated2["base_amount"] == updated2["amount"]
@@ -208,5 +234,6 @@ def test_update_expense_without_rate_override_recomputes_from_current_currency_r
     updated = client.put(
         f"/api/trips/{trip_id}/expenses/{created['id']}",
         json={"amount": 222.0},  # no rate_override field at all
+        headers=AUTH,
     ).json()
     assert updated["rate_snapshot"] == pytest.approx(0.2033693)

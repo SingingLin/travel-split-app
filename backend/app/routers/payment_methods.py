@@ -3,6 +3,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app import models, schemas
+from app.auth import check_edit_access, get_current_user, require_edit_access, require_trip_access
 from app.constants import DEFAULT_PAYMENT_METHODS
 from app.database import get_db
 
@@ -10,7 +11,7 @@ router = APIRouter(tags=["payment_methods"])
 
 
 @router.get("/api/trips/{trip_id}/payment-methods", response_model=list[schemas.PaymentMethodOut])
-def list_payment_methods(trip_id: int, db: Session = Depends(get_db)):
+def list_payment_methods(trip_id: int, access: models.TripAccess = Depends(require_trip_access), db: Session = Depends(get_db)):
     return (
         db.query(models.PaymentMethod)
         .filter(models.PaymentMethod.trip_id == trip_id)
@@ -20,7 +21,12 @@ def list_payment_methods(trip_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/api/trips/{trip_id}/payment-methods", response_model=schemas.PaymentMethodOut, status_code=201)
-def create_payment_method(trip_id: int, payload: schemas.PaymentMethodCreate, db: Session = Depends(get_db)):
+def create_payment_method(
+    trip_id: int,
+    payload: schemas.PaymentMethodCreate,
+    access: models.TripAccess = Depends(require_edit_access),
+    db: Session = Depends(get_db),
+):
     if not db.get(models.Trip, trip_id):
         raise HTTPException(status_code=404, detail="Trip not found")
     count = (
@@ -37,7 +43,11 @@ def create_payment_method(trip_id: int, payload: schemas.PaymentMethodCreate, db
 
 
 @router.post("/api/trips/{trip_id}/payment-methods/reset", response_model=list[schemas.PaymentMethodOut])
-def reset_payment_methods(trip_id: int, db: Session = Depends(get_db)):
+def reset_payment_methods(
+    trip_id: int,
+    access: models.TripAccess = Depends(require_edit_access),
+    db: Session = Depends(get_db),
+):
     """Wipe this trip's payment methods and recreate the default set (same
     list used at trip-creation time, see constants.py). Safe at the DB level:
     Expense.payment_method_id is ondelete="SET NULL" (models.py), so expenses
@@ -59,10 +69,16 @@ def reset_payment_methods(trip_id: int, db: Session = Depends(get_db)):
 
 
 @router.put("/api/payment-methods/{pm_id}", response_model=schemas.PaymentMethodOut)
-def update_payment_method(pm_id: int, payload: schemas.PaymentMethodCreate, db: Session = Depends(get_db)):
+def update_payment_method(
+    pm_id: int,
+    payload: schemas.PaymentMethodCreate,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     pm = db.get(models.PaymentMethod, pm_id)
     if not pm:
         raise HTTPException(status_code=404, detail="Payment method not found")
+    check_edit_access(db, current_user, pm.trip_id)
     pm.name = payload.name
     db.commit()
     db.refresh(pm)
@@ -70,10 +86,15 @@ def update_payment_method(pm_id: int, payload: schemas.PaymentMethodCreate, db: 
 
 
 @router.delete("/api/payment-methods/{pm_id}", status_code=204)
-def delete_payment_method(pm_id: int, db: Session = Depends(get_db)):
+def delete_payment_method(
+    pm_id: int,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     pm = db.get(models.PaymentMethod, pm_id)
     if not pm:
         raise HTTPException(status_code=404, detail="Payment method not found")
+    check_edit_access(db, current_user, pm.trip_id)
     db.delete(pm)
     db.commit()
     return None

@@ -6,6 +6,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 
 from app import models, schemas
+from app.auth import require_edit_access, require_expense_create_access, require_trip_access
 from app.database import get_db
 from app.services.split import equal_split, shares_sum_matches_total, weighted_split
 
@@ -49,6 +50,7 @@ def list_expenses(
     category_id: Optional[int] = None,
     payer_id: Optional[int] = None,
     search: Optional[str] = None,
+    access: models.TripAccess = Depends(require_trip_access),
     db: Session = Depends(get_db),
 ):
     q = (
@@ -82,7 +84,12 @@ class SplitPreviewRequest(schemas.BaseModel):
 
 
 @router.post("/api/trips/{trip_id}/expenses/split-preview")
-def split_preview(trip_id: int, payload: SplitPreviewRequest, db: Session = Depends(get_db)):
+def split_preview(
+    trip_id: int,
+    payload: SplitPreviewRequest,
+    access: models.TripAccess = Depends(require_trip_access),
+    db: Session = Depends(get_db),
+):
     """Split-amount preview shared by the three split modes in the expense
     form — single source of truth for the rounding/remainder rule:
       - '平均分攤' (equal_split): default, no `shares` in the request.
@@ -134,7 +141,16 @@ def _build_shares(db: Session, expense: models.Expense, payload, rate_snapshot: 
 
 
 @router.post("/api/trips/{trip_id}/expenses", response_model=schemas.ExpenseOut, status_code=201)
-def create_expense(trip_id: int, payload: schemas.ExpenseCreate, db: Session = Depends(get_db)):
+def create_expense(
+    trip_id: int,
+    payload: schemas.ExpenseCreate,
+    # The one endpoint a "contributor" (guest) may write to — see
+    # app/auth.py require_expense_create_access's docstring. Every other
+    # write in this router (update_expense, delete_expense below) stays on
+    # require_edit_access, which rejects "contributor" the same as "viewer".
+    access: models.TripAccess = Depends(require_expense_create_access),
+    db: Session = Depends(get_db),
+):
     if not db.get(models.Trip, trip_id):
         raise HTTPException(status_code=404, detail="Trip not found")
     currency, _payer = _validate_refs(db, trip_id, payload)
@@ -178,12 +194,23 @@ def _get_expense_or_404(db: Session, trip_id: int, expense_id: int) -> models.Ex
 
 
 @router.get("/api/trips/{trip_id}/expenses/{expense_id}", response_model=schemas.ExpenseOut)
-def get_expense(trip_id: int, expense_id: int, db: Session = Depends(get_db)):
+def get_expense(
+    trip_id: int,
+    expense_id: int,
+    access: models.TripAccess = Depends(require_trip_access),
+    db: Session = Depends(get_db),
+):
     return _get_expense_or_404(db, trip_id, expense_id)
 
 
 @router.put("/api/trips/{trip_id}/expenses/{expense_id}", response_model=schemas.ExpenseOut)
-def update_expense(trip_id: int, expense_id: int, payload: schemas.ExpenseUpdate, db: Session = Depends(get_db)):
+def update_expense(
+    trip_id: int,
+    expense_id: int,
+    payload: schemas.ExpenseUpdate,
+    access: models.TripAccess = Depends(require_edit_access),
+    db: Session = Depends(get_db),
+):
     expense = _get_expense_or_404(db, trip_id, expense_id)
 
     # Merge by "was this field explicitly present in the request", not by
@@ -261,7 +288,12 @@ def update_expense(trip_id: int, expense_id: int, payload: schemas.ExpenseUpdate
 
 
 @router.delete("/api/trips/{trip_id}/expenses/{expense_id}", status_code=204)
-def delete_expense(trip_id: int, expense_id: int, db: Session = Depends(get_db)):
+def delete_expense(
+    trip_id: int,
+    expense_id: int,
+    access: models.TripAccess = Depends(require_edit_access),
+    db: Session = Depends(get_db),
+):
     expense = _get_expense_or_404(db, trip_id, expense_id)
     db.delete(expense)
     db.commit()

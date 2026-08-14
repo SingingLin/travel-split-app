@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app import models, schemas
+from app.auth import check_edit_access, get_current_user, require_edit_access, require_trip_access
 from app.database import get_db
 
 router = APIRouter(tags=["currencies"])
@@ -13,7 +14,7 @@ EXCHANGE_RATE_API_BASE = "https://open.er-api.com/v6/latest"
 
 
 @router.get("/api/trips/{trip_id}/currencies", response_model=list[schemas.CurrencyOut])
-def list_currencies(trip_id: int, db: Session = Depends(get_db)):
+def list_currencies(trip_id: int, access: models.TripAccess = Depends(require_trip_access), db: Session = Depends(get_db)):
     return (
         db.query(models.Currency)
         .filter(models.Currency.trip_id == trip_id)
@@ -85,7 +86,12 @@ def lookup_currency_rates(base: str):
 
 
 @router.post("/api/trips/{trip_id}/currencies", response_model=schemas.CurrencyOut, status_code=201)
-def create_currency(trip_id: int, payload: schemas.CurrencyCreate, db: Session = Depends(get_db)):
+def create_currency(
+    trip_id: int,
+    payload: schemas.CurrencyCreate,
+    access: models.TripAccess = Depends(require_edit_access),
+    db: Session = Depends(get_db),
+):
     if not db.get(models.Trip, trip_id):
         raise HTTPException(status_code=404, detail="Trip not found")
     existing = (
@@ -109,10 +115,16 @@ def create_currency(trip_id: int, payload: schemas.CurrencyCreate, db: Session =
 
 
 @router.put("/api/currencies/{currency_id}", response_model=schemas.CurrencyOut)
-def update_currency(currency_id: int, payload: schemas.CurrencyUpdate, db: Session = Depends(get_db)):
+def update_currency(
+    currency_id: int,
+    payload: schemas.CurrencyUpdate,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     currency = db.get(models.Currency, currency_id)
     if not currency:
         raise HTTPException(status_code=404, detail="Currency not found")
+    check_edit_access(db, current_user, currency.trip_id)
     if currency.is_base and payload.rate_to_base is not None and payload.rate_to_base != 1.0:
         raise HTTPException(status_code=400, detail="Base currency rate is always 1.0; change base currency instead")
     for field, value in payload.model_dump(exclude_unset=True).items():
@@ -123,10 +135,15 @@ def update_currency(currency_id: int, payload: schemas.CurrencyUpdate, db: Sessi
 
 
 @router.delete("/api/currencies/{currency_id}", status_code=204)
-def delete_currency(currency_id: int, db: Session = Depends(get_db)):
+def delete_currency(
+    currency_id: int,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     currency = db.get(models.Currency, currency_id)
     if not currency:
         raise HTTPException(status_code=404, detail="Currency not found")
+    check_edit_access(db, current_user, currency.trip_id)
     if currency.is_base:
         raise HTTPException(status_code=400, detail="Cannot delete the base currency")
     in_use = db.query(models.Expense).filter(models.Expense.currency_id == currency_id).first()

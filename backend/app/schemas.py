@@ -18,9 +18,180 @@ from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 
+# ---------- User / TripAccess (see app/auth.py, routers/trips.py invite/join) ----------
+class UserOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    email: str
+    name: str
+    avatar_url: Optional[str] = None
+
+
+class TripAccessOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    trip_id: int
+    user_id: int
+    # "owner" | "editor" | "viewer" | "contributor" — see models.TripAccess's
+    # docstring for the full permission model and the "member" -> "editor"
+    # rename history.
+    role: str
+
+
+class TripAccessRoleUpdate(BaseModel):
+    """Body for PUT /api/trips/{trip_id}/access/{user_id} — owner-only role
+    change. Deliberately excludes "owner" from the allowed values at the
+    validation layer (not just an endpoint-level check): nobody may ever be
+    promoted to owner through this endpoint, and the owner's own role can
+    never be the target of this call either (see routers/trips.py
+    update_trip_access_role's extra guard for that second rule, which this
+    Literal alone can't express)."""
+    role: Literal["editor", "viewer"]
+
+
+class TripAccessUserOut(BaseModel):
+    """One row of GET /api/trips/{trip_id}/access — a user joined with their
+    role on this trip, for a future "誰能看到這趟行程" settings-page list.
+
+    `is_me` tells the frontend whether THIS row is the calling user, straight
+    from the backend's own require_trip_access-resolved identity — not
+    something the frontend should re-derive by comparing e.g. NextAuth's
+    session.user.email against `email` itself. That join breaks for a guest
+    caller (no NextAuth session at all, so session.user.email is always
+    undefined) even when the guest genuinely owns the trip, which used to
+    make owner-only UI (like "產生邀請連結") silently disappear for guest
+    owners. See PeopleSection.tsx's isOwner/myRole derivation.
+    """
+    user_id: int
+    email: str
+    name: str
+    # Google avatar to show for this user, or None to fall back to the
+    # initials/color-block avatar — same "linked, non-guest User with a
+    # stored avatar_url" gating as models.Member.avatar_url (this row
+    # already IS a User, joined directly in routers/trips.py
+    # list_trip_access, so that gate is applied there rather than via a
+    # computed property like Member's).
+    avatar_url: Optional[str] = None
+    # "owner" | "editor" | "viewer" | "contributor" — see models.TripAccess's
+    # docstring.
+    role: str
+    is_me: bool = False
+
+
+class TripInviteOut(BaseModel):
+    """Response for POST /api/trips/{trip_id}/invite — the trip's stable
+    invite code/link token (see models.Trip.invite_code)."""
+    invite_code: str
+
+
+class TripJoinIn(BaseModel):
+    """Body for POST /api/trips/join."""
+    invite_code: str = Field(min_length=1)
+    # Optional: "I am this already-existing unlinked member" — lets a
+    # Google-logged-in joiner explicitly pick which existing
+    # member.user_id IS NULL row on this trip is really them, instead of
+    # always getting a brand-new Member created (or relying on join_trip's
+    # name-exact-match heuristic). Must reference a member that belongs to
+    # THIS trip and isn't already linked — see join_trip's validation. When
+    # omitted, join_trip falls back to its name-exact-match-then-create
+    # behavior. Entirely IGNORED for a guest joiner (current_user.is_guest):
+    # a guest always lands as the restricted "contributor" role and is never
+    # linked to (or causes the creation of) a Member row at all — see
+    # join_trip's docstring and models.TripAccess's "contributor" role notes
+    # for why "which member is this guest" no longer applies.
+    claim_member_id: Optional[int] = None
+
+
+class UnlinkedMemberOut(BaseModel):
+    """One row of GET /api/trips/join/preview's unlinked_members list — id +
+    name of a Member with no linked account yet, for a Google joiner's
+    optional TripJoinIn.claim_member_id pick. Not used by the guest join
+    flow anymore (app/join/[code]/page.tsx) — see this round's "訪客也能是
+    完整成員" simplification / TripJoinIn.claim_member_id's docstring: a
+    guest never becomes (or claims) a Member."""
+    id: int
+    name: str
+
+
+class TripJoinPreviewOut(BaseModel):
+    """Response for GET /api/trips/join/preview?code=... — deliberately
+    requires no login at all (see routers/trips.py join_preview), so a brand
+    new visitor can see WHAT they're about to join before committing to a
+    login method."""
+    trip_name: str
+    unlinked_members: list[UnlinkedMemberOut]
+
+
+# ---------- Guest login / link-guest (see app/routers/auth.py) ----------
+class GuestLoginIn(BaseModel):
+    """Body for POST /api/auth/guest — optional. Lets a brand-new visitor
+    pick their own display name up front (see app/login/page.tsx's "略過登入"
+    flow) instead of always getting stuck with the generic "訪客" until they
+    later rename via PUT /api/auth/me. Entirely optional (the whole point of
+    guest login is zero-friction), so this endpoint also accepts no body at
+    all — see routers/auth.py guest_login for the None/blank -> "訪客"
+    fallback logic."""
+    name: Optional[str] = Field(default=None, max_length=120)
+
+
+class GuestLoginOut(BaseModel):
+    """Response for POST /api/auth/guest — a freshly signed JWT for a
+    brand-new guest User, in the same format Google-login-issued tokens use
+    (see app/auth.py create_access_token). The frontend stores `token` in
+    localStorage (never a cookie — see frontend/lib/authToken.ts) and sends
+    it as this guest's Authorization bearer on every subsequent request,
+    exactly like a normal logged-in user's token.
+
+    No `recovery_code` anymore — this round's "訪客不該有任何帳號感"
+    simplification removed the whole guest-recovery mechanism (see
+    models.User.recovery_code's docstring); a guest identity is disposable
+    and lives only as long as this browser keeps `token`."""
+    token: str
+    user: UserOut
+
+
+class LinkGuestIn(BaseModel):
+    """Body for POST /api/auth/link-guest — the guest-mode JWT the frontend
+    previously stored in localStorage (see GuestLoginOut.token above),
+    forwarded here so this (now real, Google-authenticated) request can look
+    up which guest User to merge into current_user."""
+    guest_token: str = Field(min_length=1)
+
+
+class UserUpdate(BaseModel):
+    """Body for PUT /api/auth/me — currently just a rename. Any logged-in
+    user (guest or Google) may call this for themselves; the frontend only
+    exposes a rename UI for guests (see components/UserMenu.tsx) since a
+    Google user's name comes from their Google account itself, but the
+    backend doesn't need to enforce that — there's no harm in a Google user
+    renaming their in-app display name too, and gating it here would just be
+    one more rule to keep in sync with the frontend for no real benefit."""
+    name: str = Field(min_length=1, max_length=120)
+
+
 # ---------- Member ----------
 class MemberCreate(BaseModel):
     name: str = Field(min_length=1, max_length=80)
+
+
+class MemberUpdate(BaseModel):
+    """Body for PUT /api/members/{member_id}. `name` stays required (this
+    endpoint used to be a pure rename, so every existing caller — e.g.
+    PeopleSection.tsx's inline-rename — still sends only `name`); the five
+    initial_exchange_* fields are new, all optional, and let the SAME
+    endpoint also update this member's own "初始換匯" record (see
+    models.Member's docstring — moved here from being trip-wide on Trip) in
+    one call instead of a separate endpoint. Sending them as `None`
+    explicitly clears that field (same "present -> write, absent -> leave
+    the OTHER fields alone, but an explicit None still writes None"
+    semantics every other *Update schema in this file already uses via
+    model_dump(exclude_unset=True) at the call site)."""
+    name: str = Field(min_length=1, max_length=80)
+    initial_exchange_from_currency: Optional[str] = Field(default=None, max_length=10)
+    initial_exchange_from_amount: Optional[float] = Field(default=None, ge=0)
+    initial_exchange_to_currency: Optional[str] = Field(default=None, max_length=10)
+    initial_exchange_to_amount: Optional[float] = Field(default=None, ge=0)
+    initial_exchange_rate: Optional[float] = Field(default=None, gt=0)
 
 
 class MemberOut(BaseModel):
@@ -30,6 +201,31 @@ class MemberOut(BaseModel):
     name: str
     color: str
     order_index: int
+    # Optional link to the User this split-participant corresponds to — see
+    # models.Member.user_id's docstring for the three write sites
+    # (create_trip / join_trip / link_guest). None for a plain split-only
+    # Member with no app account. Lets the frontend show a "已連結帳號" badge
+    # on members.py MembersSection-turned-PeopleSection rows that ARE a real
+    # login identity, distinct from ones that are just a name.
+    user_id: Optional[int] = None
+    # Google avatar to show for this member instead of the initials/color-
+    # block avatar — None whenever the linked User is a guest, has no
+    # avatar_url stored, or there's no linked User at all (plain split-only
+    # Member). Not a real DB column: computed at read time by
+    # models.Member.avatar_url (see that property's docstring for the exact
+    # gating), picked up automatically here via `from_attributes=True` since
+    # this class validates directly off ORM Member instances/attributes.
+    avatar_url: Optional[str] = None
+    # Per-person "初始換匯" record — see models.Member's docstring for the
+    # full field semantics (same shape/direction-convention as Trip's
+    # now-superseded trip-wide version). PeopleSection.tsx reads/writes
+    # these per member; SettlementPageClient.tsx's per-member budget-vs-spend
+    # comparison uses initial_exchange_to_amount/_to_currency.
+    initial_exchange_from_currency: Optional[str] = None
+    initial_exchange_from_amount: Optional[float] = None
+    initial_exchange_to_currency: Optional[str] = None
+    initial_exchange_to_amount: Optional[float] = None
+    initial_exchange_rate: Optional[float] = None
 
 
 # ---------- Currency ----------
@@ -165,12 +361,25 @@ class TripDetailOut(TripOut):
     currencies: list[CurrencyOut] = []
     categories: list[CategoryOut] = []
     payment_methods: list[PaymentMethodOut] = []
+    # The CALLING user's own TripAccess.role for this trip ("owner" |
+    # "editor" | "viewer") — same idea as TripSummaryOut.my_role below, but
+    # for the single-trip detail payload (GET/PUT /api/trips/{trip_id} etc.).
+    # Powers frontend viewer-role gating (hide/disable add/edit/delete
+    # controls for a "viewer") without a second round-trip per page just to
+    # learn the caller's own role. See routers/trips.py's _trip_detail_out.
+    my_role: str = "owner"
 
 
 class TripSummaryOut(TripOut):
     """Trip list card: adds aggregate total spend + member avatars."""
     members: list[MemberOut] = []
     total_base_amount: float = 0.0
+    # The CALLING user's own TripAccess.role for this trip ("owner" |
+    # "editor" | "viewer") — powers frontend/components/TripSidebar.tsx +
+    # MobileTripDrawer.tsx's "只有 owner 才看得到刪除行程" gating, so the
+    # frontend doesn't need a second /access round-trip per trip just to
+    # know who's allowed to delete it.
+    my_role: str = "editor"
 
 
 # ---------- Expense / ExpenseShare ----------

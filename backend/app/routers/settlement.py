@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, selectinload
 
 from app import models, schemas
+from app.auth import require_trip_access
 from app.database import get_db
 from app.services.settlement import compute_settlement
 
@@ -119,7 +120,12 @@ def _build_settlement_out(
 
 
 @router.get("/api/trips/{trip_id}/settlement", response_model=schemas.SettlementOut)
-def get_settlement(trip_id: int, currency: str | None = None, db: Session = Depends(get_db)):
+def get_settlement(
+    trip_id: int,
+    currency: str | None = None,
+    access: models.TripAccess = Depends(require_trip_access),
+    db: Session = Depends(get_db),
+):
     """統一換算 mode: every expense/share converted into a single target
     display currency (defaults to the trip's base currency) before summing —
     see get_settlement_by_currency below for the 依原幣別分開 alternative."""
@@ -158,7 +164,11 @@ def get_settlement(trip_id: int, currency: str | None = None, db: Session = Depe
 
 
 @router.get("/api/trips/{trip_id}/settlement/by-currency", response_model=schemas.NativeSettlementOut)
-def get_settlement_by_currency(trip_id: int, db: Session = Depends(get_db)):
+def get_settlement_by_currency(
+    trip_id: int,
+    access: models.TripAccess = Depends(require_trip_access),
+    db: Session = Depends(get_db),
+):
     """依原幣別分開結算 mode: group this trip's expenses by their own native
     currency (no conversion at all — uses each expense/share's raw
     amount/effective_amount, not base_amount) and compute one independent

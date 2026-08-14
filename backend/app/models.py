@@ -84,6 +84,16 @@ class Trip(Base):
     initial_exchange_to_currency: Mapped[str | None] = mapped_column(String(10), nullable=True)
     initial_exchange_to_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
     initial_exchange_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Stable per-trip invite token used by POST /{trip_id}/invite and
+    # POST /trips/join (see routers/trips.py and app/auth.py's TripAccess-
+    # based permission model). NULL until the trip's owner first calls
+    # /invite — generated once (secrets.token_urlsafe), then reused forever
+    # (repeated /invite calls return the same code rather than rotating it).
+    # Added via database.ensure_columns (SQLite ADD COLUMN), same caveat as
+    # initial_budget above; its UNIQUE index is added separately via
+    # database.ensure_unique_index since SQLite's ADD COLUMN can't attach a
+    # UNIQUE constraint inline (see that function's docstring).
+    invite_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     members: Mapped[list["Member"]] = relationship(
@@ -96,6 +106,21 @@ class Trip(Base):
         back_populates="trip", cascade="all, delete-orphan", order_by="Category.order_index"
     )
     payment_methods: Mapped[list["PaymentMethod"]] = relationship(
+        back_populates="trip", cascade="all, delete-orphan"
+    )
+    # ORM-level cascade (not just the DB-level ondelete="CASCADE" on
+    # TripAccess.trip_id below) so deleting a trip via the ORM (db.delete
+    # (trip); see routers/trips.py delete_trip) always cleans up its
+    # TripAccess rows even on a connection/engine that doesn't have SQLite's
+    # `PRAGMA foreign_keys=ON` enabled (e.g. a test engine built without
+    # app.database's connect event listener) — matches every other
+    # relationship on this model. Without this, an orphaned TripAccess row
+    # from a deleted trip can silently reattach itself to a *different*,
+    # later-created trip that happens to reuse the same integer id (SQLite
+    # reuses a table's lowest free rowid once it's empty) — a real
+    # permission-leak footgun this project doesn't want, not just a test
+    # artifact.
+    trip_accesses: Mapped[list["TripAccess"]] = relationship(
         back_populates="trip", cascade="all, delete-orphan"
     )
     expenses: Mapped[list["Expense"]] = relationship(
@@ -114,8 +139,82 @@ class Member(Base):
     name: Mapped[str] = mapped_column(String(80), nullable=False)
     color: Mapped[str] = mapped_column(String(20), nullable=False, default="#14b8a6")
     order_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Optional link to the User (login identity) this split-participant
+    # corresponds to — NULL for a "pure" split-only Member with no app
+    # account at all (e.g. tracking a friend's cash contributions who never
+    # logs in; that ability is the whole reason Member and User/TripAccess
+    # stay separate tables, see routers/trips.py join_trip and this column's
+    # write sites below). Set automatically, never picked by the user
+    # directly:
+    #   - create_trip (routers/trips.py): the creator's auto-added Member
+    #     gets user_id=current_user.id.
+    #   - join_trip (routers/trips.py): redeeming an invite code auto-links
+    #     (or auto-creates) a Member with user_id=current_user.id, so
+    #     whoever joins via a shared link is automatically also a split
+    #     participant without the owner manually adding them.
+    #   - link_guest (routers/auth.py): repoints every Member.user_id that
+    #     pointed at the guest User over to the real Google User, mirroring
+    #     what it already does for TripAccess.user_id, so a guest's split-
+    #     member identity carries over when they upgrade to a real login.
+    # ondelete="SET NULL" (not CASCADE): deleting a User account should not
+    # delete the Member/its expense history — it should just fall back to
+    # being a plain unlinked name, same as if it had never been linked.
+    # Added via database.ensure_columns (SQLite ADD COLUMN), same caveat as
+    # every other ensure_columns-backfilled column in this file — see
+    # main.py for the actual ALTER TABLE call.
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+    # Per-person "初始換匯" record — same five fields/semantics as
+    # Trip.initial_exchange_* (see models.Trip's docstring for the full field
+    # meaning, direction convention, and "independently editable, not
+    # force-matched" design), just scoped to ONE member instead of the whole
+    # trip: each person may have exchanged a different amount at a different
+    # rate, so this now lives per-Member rather than once per-Trip.
+    # Trip.initial_exchange_* itself is left in place, unused, per this
+    # project's no-migration-tooling policy (see Trip's docstring) —
+    # frontend/components/settings/PeopleSection.tsx is what reads/writes
+    # these now (moved from TripInfoSection.tsx), and
+    # SettlementPageClient.tsx's budget-vs-spend comparison is now per-member
+    # (MemberSummaryCard), not a single trip-wide bar. Works for a member
+    # with no linked User account too — "how much cash this person brought"
+    # has nothing to do with whether they've ever logged into the app.
+    # Added via database.ensure_columns, same caveat as user_id above.
+    initial_exchange_from_currency: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    initial_exchange_from_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    initial_exchange_to_currency: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    initial_exchange_to_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    initial_exchange_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     trip: Mapped["Trip"] = relationship(back_populates="members")
+    user: Mapped["User | None"] = relationship()
+
+    @property
+    def avatar_url(self) -> str | None:
+        """Google avatar to show for this split-participant, or None to fall
+        back to the initials/color-block avatar (see schemas.MemberOut /
+        frontend/components/Avatar.tsx). Deliberately gated here, server-side
+        (not just "whatever User.avatar_url happens to hold"), on BOTH
+        conditions the task requires:
+          - `user` is linked at all (a plain unlinked split-only Member has
+            no account, let alone an avatar).
+          - `user.is_guest` is False — a guest's `avatar_url` is always None
+            anyway (guests never go through Google login, see
+            app/auth.py get_current_user), but the explicit check keeps this
+            correct even if a guest row somehow ever got one written to it.
+        Not a mapped column — computed at read time from the `user`
+        relationship, so it's always in sync with whatever the linked User's
+        avatar_url currently is (kept fresh on every Google sign-in, see
+        get_current_user). Pydantic's `from_attributes=True` (schemas.
+        MemberOut) picks this up exactly like any other attribute, so every
+        call site that returns a Member (either via MemberOut.model_validate
+        or a raw ORM object through `response_model=MemberOut`) gets this for
+        free with no per-call-site wiring.
+        """
+        if self.user is not None and not self.user.is_guest and self.user.avatar_url:
+            return self.user.avatar_url
+        return None
 
 
 class Currency(Base):
@@ -243,3 +342,110 @@ class ExpenseShare(Base):
 
     expense: Mapped["Expense"] = relationship(back_populates="shares")
     member: Mapped["Member"] = relationship()
+
+
+class User(Base):
+    """An authenticated app user, upserted on first request from the
+    Authorization JWT's `email` claim (see app/auth.py get_current_user) —
+    this round doesn't do real Google login, but the JWT's payload shape is
+    designed to match what a future Google-login-issued token will carry.
+    Brand-new table, so plain Base.metadata.create_all() (main.py) is enough
+    to create it; no ensure_columns() backfill needed.
+
+    is_guest: True for a User row created by POST /api/auth/guest (no Google
+    login at all — see routers/auth.py) instead of a real Google identity.
+    A guest User's `email` is never actually theirs — it's a synthetic,
+    guaranteed-unique placeholder ("guest-<uuid>@guest.local") so it can
+    still satisfy this table's `email` UNIQUE NOT NULL constraint without
+    reusing the same "no email" sentinel across every guest. Guest users are
+    meant to be short-lived: POST /api/auth/link-guest transfers every
+    TripAccess row a guest owns to a real (Google-logged-in) User and then
+    deletes the guest User row outright — see that endpoint's docstring for
+    the full transfer/cleanup flow. Added via database.ensure_columns
+    (SQLite ADD COLUMN), same caveat as e.g. Expense.foreign_fee above:
+    existing User rows (all real Google logins from before this column
+    existed) backfill to `is_guest=False` via the column's SQLite-level
+    DEFAULT, which is exactly what they should be.
+    """
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    avatar_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    is_guest: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # RETIRED: this round's "訪客不該有任何帳號感" simplification removed the
+    # guest "找回代碼" feature entirely (POST /api/auth/guest/recover is gone,
+    # guest_login no longer generates/writes a value here) — a guest is now a
+    # pure, disposable per-browser identity with no recovery mechanism at
+    # all, on purpose (see routers/auth.py guest_login's docstring). This
+    # column is kept, per this project's "舊欄位保留閒置" convention, purely
+    # so existing rows (and this table's shape) don't need a migration; it is
+    # never written to for any NEW row and should be treated as dead data —
+    # always NULL for a guest created after this round, and for every real
+    # Google-login User as before. Added via database.ensure_columns (SQLite
+    # ADD COLUMN); its UNIQUE index (database.ensure_unique_index, see
+    # main.py) is likewise left in place but inert.
+    recovery_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class TripAccess(Base):
+    """Join table granting a User permission to view/edit one Trip's shared
+    data — the core of the "same trip, same data, multiple invited people"
+    model (see app/auth.py require_trip_access/require_edit_access/
+    require_expense_create_access, routers/trips.py invite/join endpoints).
+    `role` is one of four values: "owner" (the trip's creator, or whoever a
+    future round transfers ownership to — the only role that may delete the
+    trip, revoke another user's access, generate an invite link, merge
+    members, or change someone else's role), "editor" (can view and edit
+    everything else — add/edit/delete expenses, members, currencies,
+    categories, payment methods, trip info), "viewer" (read-only — every GET
+    works, every write is rejected by app/auth.py's require_edit_access with
+    a 403), or "contributor" (the guest-mode restricted role — see below).
+
+    "contributor" — added for the "訪客也能是完整成員" simplification round:
+    a guest (User.is_guest True) who joins a trip via an invite link always
+    gets this role, never "editor" (see routers/trips.py join_trip). A
+    contributor may ONLY create new expenses (require_expense_create_access,
+    the one carve-out from require_edit_access) and read everything a viewer
+    can read (require_trip_access) — every other write (edit/delete an
+    expense, members/currencies/categories/payment-methods/trip-info,
+    invite-link generation, access management) is rejected by
+    require_edit_access exactly like "viewer" is. This role is never
+    assigned manually — PUT /api/trips/{trip_id}/access/{user_id}'s
+    TripAccessRoleUpdate schema only allows switching between "editor" and
+    "viewer" (see schemas.py), so the only way a TripAccess row ends up
+    "contributor" is join_trip's is_guest branch. A contributor is
+    deliberately never linked to (or auto-creates) a Member row — a guest
+    can fill in a Member-authored expense's payer/split-participant fields by
+    picking among existing Members, but is never themselves selectable as
+    one (see this round's task spec / models.Member's docstring: the only
+    two ways to become a Member are a real Google login or the trip owner
+    manually typing in a plain name).
+
+    Historical note: this column used to only have two values, "owner" and
+    "member" ("member" meaning exactly what "editor" means now — real-user
+    feedback was that "member"/"協作者" read as vague, not that its
+    permissions needed to change). Every pre-existing "member" row was
+    content-migrated (not schema-migrated — see database.py
+    backfill_role_member_to_editor, called once at startup in main.py) to
+    "editor" with no change in actual behavior for those users. New rows
+    are always written with an explicit role by every call site (create_trip
+    -> "owner", join_trip -> "editor" for a Google user / "contributor" for
+    a guest) — the "editor" column default below only matters for defensive
+    completeness (e.g. a future raw INSERT that omits the column), not any
+    real code path today.
+    Brand-new table, same create_all() note as User above."""
+    __tablename__ = "trip_access"
+    __table_args__ = (UniqueConstraint("trip_id", "user_id", name="uq_trip_access_trip_user"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    trip_id: Mapped[int] = mapped_column(ForeignKey("trips.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    # "owner" | "editor" | "viewer" | "contributor" — see this class's docstring.
+    role: Mapped[str] = mapped_column(String(20), nullable=False, default="editor")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    trip: Mapped["Trip"] = relationship(back_populates="trip_accesses")
+    user: Mapped["User"] = relationship()

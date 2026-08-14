@@ -10,8 +10,10 @@ ExpenseFormDialog.tsx's upload flow and models.Expense.image_url.
 import os
 import uuid
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
+from app import models
+from app.auth import get_current_user
 from app.database import BASE_DIR
 
 router = APIRouter(prefix="/api/uploads", tags=["uploads"])
@@ -24,7 +26,19 @@ MAX_UPLOAD_BYTES = 5 * 1024 * 1024  # 5MB
 
 
 @router.post("/expense-image")
-async def upload_expense_image(file: UploadFile = File(...)):
+async def upload_expense_image(
+    file: UploadFile = File(...),
+    current_user: models.User = Depends(get_current_user),
+):
+    # NOTE: this endpoint has no trip_id (the multipart request is just the
+    # raw file — see frontend/lib/api.ts uploadExpenseImage), so unlike every
+    # other trip-scoped router this round can only enforce "must be logged
+    # in" (get_current_user) here, not require_trip_access — there's no
+    # trip_id to check access against. Any logged-in user can upload an
+    # image (it isn't linked to any expense/trip until the returned URL is
+    # later saved onto an Expense via a *separately* trip-access-checked
+    # POST/PUT .../expenses call). A future round could add trip_id to this
+    # endpoint's path/form data to close that gap; out of scope here.
     ext = os.path.splitext(file.filename or "")[1].lower()
     if file.content_type not in ALLOWED_CONTENT_TYPES or ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(status_code=400, detail="僅支援 JPG / PNG / WEBP 圖片格式")

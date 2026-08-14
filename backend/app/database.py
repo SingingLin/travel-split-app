@@ -120,3 +120,44 @@ def ensure_columns(table_name: str, column_defs: list[str]) -> None:
                 conn.execute(
                     text(f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS {col_def}")
                 )
+
+
+def ensure_unique_index(table_name: str, index_name: str, column_name: str) -> None:
+    """Idempotent creation of a UNIQUE index on a column that was added to an
+    *existing* table after the table itself already existed (e.g.
+    trips.invite_code — see ensure_columns above for why a plain model field
+    alone isn't enough, and models.Trip's invite_code docstring for why it
+    needs to be unique).
+
+    SQLite's `ALTER TABLE ... ADD COLUMN` (used by ensure_columns) can't
+    attach a UNIQUE constraint inline, so the column is added as plain
+    nullable there first, then this creates the unique index as a separate
+    DDL statement. `CREATE UNIQUE INDEX IF NOT EXISTS` is supported by both
+    SQLite and Postgres with identical syntax, so — unlike ensure_columns —
+    no dialect branch is needed here. Standard SQL NULL-is-distinct
+    semantics mean a UNIQUE index permits any number of NULL rows, so this is
+    safe to run even though every existing trip's invite_code starts out
+    NULL (only set lazily, the first time a trip's owner calls
+    POST /api/trips/{trip_id}/invite).
+    """
+    with engine.begin() as conn:
+        conn.execute(
+            text(f"CREATE UNIQUE INDEX IF NOT EXISTS {index_name} ON {table_name} ({column_name})")
+        )
+
+
+def backfill_role_member_to_editor() -> int:
+    """One-time DATA content update (not a schema migration — no column
+    shape changes, so ensure_columns/ensure_unique_index above don't apply
+    here) for the "擁有者／可編輯／唯讀" role rename: every existing
+    trip_access row with the old `role='member'` value becomes `role=
+    'editor'`, a pure rename with no change in actual permissions (a
+    "member" could already edit everything an "editor" can — see
+    app/auth.py require_edit_access / models.TripAccess's docstring for the
+    full history). Called once at startup (see main.py); idempotent — once
+    no row has role='member' left, every later call just updates 0 rows.
+    Returns the number of rows changed, purely so main.py can log it.
+    """
+    with engine.begin() as conn:
+        result = conn.execute(text("UPDATE trip_access SET role = 'editor' WHERE role = 'member'"))
+        return result.rowcount
