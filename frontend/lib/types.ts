@@ -6,6 +6,32 @@ export interface Member {
   name: string;
   color: string;
   order_index: number;
+  /** Optional link to the User (login identity) this split-participant
+   * corresponds to — null for a "pure" split-only Member with no app
+   * account. See backend/app/models.py Member.user_id's docstring for the
+   * three write sites (create_trip / join_trip / link-guest) that set
+   * this. Powers components/settings/PeopleSection.tsx's "已連結帳號"
+   * badge. */
+  user_id: number | null;
+  /** Google avatar to show instead of the initials/color-block avatar — null
+   * whenever this member has no linked User, that User is a guest, or that
+   * User has no avatar_url stored. Computed server-side (see
+   * backend/app/models.py Member.avatar_url), never derived on the
+   * frontend. See components/Avatar.tsx. */
+  avatar_url: string | null;
+  /** Per-person "初始換匯" record — same shape/direction-convention as the
+   * now-superseded trip-wide Trip.initial_exchange_* fields (see
+   * backend/app/models.py Member's docstring): this member exchanged
+   * initial_exchange_from_amount units of initial_exchange_from_currency
+   * into initial_exchange_to_amount units of initial_exchange_to_currency,
+   * at initial_exchange_rate. All five independently nullable/editable — see
+   * components/settings/PeopleSection.tsx's per-member panel and
+   * components/SettlementPageClient.tsx's per-member budget-vs-spend card. */
+  initial_exchange_from_currency: string | null;
+  initial_exchange_from_amount: number | null;
+  initial_exchange_to_currency: string | null;
+  initial_exchange_to_amount: number | null;
+  initial_exchange_rate: number | null;
 }
 
 export interface Currency {
@@ -64,16 +90,36 @@ export interface Trip {
   created_at: string;
 }
 
+/** "owner" | "editor" | "viewer" | "contributor" — see backend/app/models.py
+ * TripAccess's docstring for the full permission model (owner: full control
+ * incl. irreversible/owner-only actions; editor: can view/edit everything
+ * else; viewer: read-only, every write is rejected server-side by
+ * require_edit_access; contributor: the guest-mode restricted role — may
+ * ONLY create a new expense, everything else 403s the same as viewer, see
+ * require_expense_create_access). Used both for TripAccessUser.role (any
+ * user's role) and TripDetail/TripSummary.my_role (the CALLING user's own
+ * role). */
+export type TripRole = "owner" | "editor" | "viewer" | "contributor" | string;
+
 export interface TripDetail extends Trip {
   members: Member[];
   currencies: Currency[];
   categories: Category[];
   payment_methods: PaymentMethod[];
+  /** The CALLING user's own role on THIS trip — see TripRole. Powers
+   * viewer-role UI gating (hide/disable add/edit/delete controls) across
+   * ExpensesPageClient.tsx and the settings-page sections, without a
+   * separate GET /access round-trip just to learn it. See backend
+   * schemas.TripDetailOut.my_role / routers/trips.py's _trip_detail_out. */
+  my_role: TripRole;
 }
 
 export interface TripSummary extends Trip {
   members: Member[];
   total_base_amount: number;
+  /** Calling user's own role on this trip — see TripRole. Powers
+   * TripSidebar.tsx / MobileTripDrawer.tsx's owner-only "刪除行程" entry. */
+  my_role: TripRole;
 }
 
 export interface ExpenseShare {
@@ -185,4 +231,30 @@ export interface Settlement {
  * SettlementPageClient.tsx's "依原幣別分開結算" mode. */
 export interface NativeSettlement {
   results: Settlement[];
+}
+
+/** One row of GET /api/trips/{id}/access — mirrors backend
+ * schemas.TripAccessUserOut. Powers PeopleSection.tsx's merged 成員/共用行程
+ * list; `role` is TripRole (backend/app/models.py TripAccess).
+ * `is_me` is set by the backend from the caller's own resolved TripAccess
+ * row — use it (not a session/email comparison) to find "my" row and role,
+ * since a guest caller has no NextAuth session to compare against at all. */
+export interface TripAccessUser {
+  user_id: number;
+  email: string;
+  name: string;
+  /** Same "linked, non-guest, has a stored avatar" gating as Member.
+   * avatar_url above — see components/Avatar.tsx. */
+  avatar_url: string | null;
+  role: TripRole;
+  is_me: boolean;
+}
+
+/** Mirrors backend schemas.UserOut — the `user` field of
+ * POST /api/auth/guest's response. See lib/api.ts guestLogin. */
+export interface UserOut {
+  id: number;
+  email: string;
+  name: string;
+  avatar_url: string | null;
 }

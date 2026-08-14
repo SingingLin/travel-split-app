@@ -1,15 +1,19 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useTrip } from "@/lib/TripContext";
 import TripInfoSection from "@/components/settings/TripInfoSection";
-import MembersSection from "@/components/settings/MembersSection";
+import PeopleSection from "@/components/settings/PeopleSection";
 import CurrenciesSection from "@/components/settings/CurrenciesSection";
 import CategoriesSection from "@/components/settings/CategoriesSection";
 import PaymentMethodsSection from "@/components/settings/PaymentMethodsSection";
 import DangerZoneSection from "@/components/settings/DangerZoneSection";
 
+// "成員" now covers what used to be two separate sections (split-accounting
+// Members + TripAccess/邀請 sharing) merged into one — see
+// components/settings/PeopleSection.tsx's docstring for why.
 const SECTIONS = [
   { key: "info", label: "行程資訊", anchor: "section-info" },
   { key: "members", label: "成員", anchor: "section-members" },
@@ -20,6 +24,7 @@ const SECTIONS = [
 
 export default function SettingsPageClient({}: { tripId: number }) {
   const { trip, reload } = useTrip();
+  const router = useRouter();
   // Mobile accordion defaults to only "成員" expanded, everything else
   // (including 行程資訊) collapsed — per uiux-audit-2026-08-12.md §1.5, the
   // most-visited section on mobile is Members, not the trip-info block with
@@ -27,7 +32,27 @@ export default function SettingsPageClient({}: { tripId: number }) {
   const [openSections, setOpenSections] = useState<Set<string>>(new Set(["members"]));
   const [activeAnchor, setActiveAnchor] = useState("section-info");
 
-  if (!trip) return null;
+  // A "contributor" (guest — see backend models.TripAccess's docstring)
+  // can't do ANYTHING on this page — the whole settings area is off-limits
+  // per this round's "訪客也能是完整成員" simplification (訪客的存在意義只有
+  // 記帳跟看結算). The backend is the real permission boundary (every write
+  // here 403s for a contributor anyway), but a contributor landing on a
+  // half-functional settings page by typing the URL directly reads as
+  // broken, not "no access" — bounce them straight to the expenses page
+  // instead, same as TripNav.tsx/BottomTabBar already hiding the "設定" tab
+  // entry point entirely for this role.
+  useEffect(() => {
+    if (trip?.my_role === "contributor") router.replace(`/trips/${trip.id}`);
+  }, [trip?.my_role, trip?.id, router]);
+
+  if (!trip || trip.my_role === "contributor") return null;
+
+  // "唯讀" gating — passed down to every section below so their own add/
+  // edit/delete controls hide themselves for a viewer (the backend's
+  // require_edit_access is the real permission boundary; this just avoids a
+  // viewer clicking something that was always going to 403). See
+  // lib/types.ts TripDetail.my_role's docstring.
+  const readOnly = trip.my_role === "viewer";
 
   const toggleSection = (key: string) => {
     setOpenSections((prev) => {
@@ -41,28 +66,28 @@ export default function SettingsPageClient({}: { tripId: number }) {
   const sections = [
     {
       key: "info",
-      full: <TripInfoSection trip={trip} onChanged={reload} />,
-      bare: <TripInfoSection trip={trip} onChanged={reload} bare />,
+      full: <TripInfoSection trip={trip} onChanged={reload} readOnly={readOnly} />,
+      bare: <TripInfoSection trip={trip} onChanged={reload} readOnly={readOnly} bare />,
     },
     {
       key: "members",
-      full: <MembersSection trip={trip} onChanged={reload} />,
-      bare: <MembersSection trip={trip} onChanged={reload} bare />,
+      full: <PeopleSection trip={trip} onChanged={reload} />,
+      bare: <PeopleSection trip={trip} onChanged={reload} bare />,
     },
     {
       key: "currencies",
-      full: <CurrenciesSection trip={trip} onChanged={reload} />,
-      bare: <CurrenciesSection trip={trip} onChanged={reload} bare />,
+      full: <CurrenciesSection trip={trip} onChanged={reload} readOnly={readOnly} />,
+      bare: <CurrenciesSection trip={trip} onChanged={reload} readOnly={readOnly} bare />,
     },
     {
       key: "categories",
-      full: <CategoriesSection trip={trip} onChanged={reload} />,
-      bare: <CategoriesSection trip={trip} onChanged={reload} bare />,
+      full: <CategoriesSection trip={trip} onChanged={reload} readOnly={readOnly} />,
+      bare: <CategoriesSection trip={trip} onChanged={reload} readOnly={readOnly} bare />,
     },
     {
       key: "payment-methods",
-      full: <PaymentMethodsSection trip={trip} onChanged={reload} />,
-      bare: <PaymentMethodsSection trip={trip} onChanged={reload} bare />,
+      full: <PaymentMethodsSection trip={trip} onChanged={reload} readOnly={readOnly} />,
+      bare: <PaymentMethodsSection trip={trip} onChanged={reload} readOnly={readOnly} bare />,
     },
   ];
 
@@ -95,7 +120,7 @@ export default function SettingsPageClient({}: { tripId: number }) {
               settings page, after every other section, never inside the
               accordion collapse mechanism above (see uiux-audit-2026-08-12.md
               §1.7). */}
-          <DangerZoneSection trip={trip} />
+          {!readOnly && <DangerZoneSection trip={trip} />}
         </div>
       </div>
 
@@ -118,7 +143,7 @@ export default function SettingsPageClient({}: { tripId: number }) {
             </div>
           );
         })}
-        <DangerZoneSection trip={trip} />
+        {!readOnly && <DangerZoneSection trip={trip} />}
       </div>
     </div>
   );

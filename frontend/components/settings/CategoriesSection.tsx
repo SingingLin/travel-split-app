@@ -13,10 +13,14 @@ export default function CategoriesSection({
   trip,
   onChanged,
   bare = false,
+  readOnly = false,
 }: {
   trip: TripDetail;
   onChanged: () => void;
   bare?: boolean;
+  /** "唯讀" gating — hides 重設為預設 / 新增分類, and per-chip rename/remove.
+   * See SettingsPageClient.tsx / lib/types.ts TripDetail.my_role's docstring. */
+  readOnly?: boolean;
 }) {
   const { showToast } = useToast();
   const [name, setName] = useState("");
@@ -119,13 +123,15 @@ export default function CategoriesSection({
       {!bare && (
         <div className="flex items-center justify-between mb-3">
           <p className="text-sm md:text-base font-semibold text-slate-900">分類</p>
-          <ConfirmButton
-            message="確定要重設分類嗎？將清空目前所有分類，並改回預設的 7 個分類（吃喝／移動／購物／票券／住宿／機票／娛樂）；已使用中的支出會自動變成「未分類」。"
-            onConfirm={resetToDefaults}
-            className="text-[11px] text-slate-400 hover:text-rose-600 font-medium disabled:opacity-50"
-          >
-            {resetting ? "重設中…" : "重設為預設"}
-          </ConfirmButton>
+          {!readOnly && (
+            <ConfirmButton
+              message="確定要重設分類嗎？將清空目前所有分類，並改回預設的 7 個分類（吃喝／移動／購物／票券／住宿／機票／娛樂）；已使用中的支出會自動變成「未分類」。"
+              onConfirm={resetToDefaults}
+              className="text-[11px] text-slate-400 hover:text-rose-600 font-medium disabled:opacity-50"
+            >
+              {resetting ? "重設中…" : "重設為預設"}
+            </ConfirmButton>
+          )}
         </div>
       )}
       <div className="flex flex-wrap gap-1.5 items-center">
@@ -159,31 +165,32 @@ export default function CategoriesSection({
               key={c.id}
               name={c.name}
               color={c.color}
-              onNameClick={() => startEdit(c)}
-              onRemove={() => remove(c.id, c.name)}
+              onNameClick={readOnly ? undefined : () => startEdit(c)}
+              onRemove={readOnly ? undefined : () => remove(c.id, c.name)}
             />
           )
         )}
-        {adding ? (
-          <input
-            autoFocus
-            className="border border-dashed border-slate-300 rounded-full px-3 py-1 text-xs text-slate-600 outline-none"
-            placeholder="分類名稱"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onBlur={add}
-            onKeyDown={(e) => e.key === "Enter" && add()}
-          />
-        ) : (
-          <button
-            onClick={() => setAdding(true)}
-            className="border border-dashed border-slate-300 rounded-full px-3 py-1 text-xs text-slate-400 font-medium inline-flex items-center gap-1"
-          >
-            <Plus size={12} aria-hidden="true" /> 新增分類
-          </button>
-        )}
+        {!readOnly &&
+          (adding ? (
+            <input
+              autoFocus
+              className="border border-dashed border-slate-300 rounded-full px-3 py-1 text-xs text-slate-600 outline-none"
+              placeholder="分類名稱"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onBlur={add}
+              onKeyDown={(e) => e.key === "Enter" && add()}
+            />
+          ) : (
+            <button
+              onClick={() => setAdding(true)}
+              className="border border-dashed border-slate-300 rounded-full px-3 py-1 text-xs text-slate-400 font-medium inline-flex items-center gap-1"
+            >
+              <Plus size={12} aria-hidden="true" /> 新增分類
+            </button>
+          ))}
       </div>
-      {bare && (
+      {bare && !readOnly && (
         <div className="mt-3">
           <ConfirmButton
             message="確定要重設分類嗎？將清空目前所有分類，並改回預設的 7 個分類（吃喝／移動／購物／票券／住宿／機票／娛樂）；已使用中的支出會自動變成「未分類」。"

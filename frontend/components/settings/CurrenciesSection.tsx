@@ -5,6 +5,7 @@ import Card from "@/components/Card";
 import ConfirmButton from "@/components/ConfirmButton";
 import Dialog from "@/components/Dialog";
 import Button from "@/components/Button";
+import Select from "@/components/Select";
 import { Plus, X } from "lucide-react";
 import { createCurrency, deleteCurrency, updateCurrency, changeBaseCurrency, getCurrencyRates, ApiError } from "@/lib/api";
 import { useToast } from "@/lib/ToastContext";
@@ -28,10 +29,15 @@ export default function CurrenciesSection({
   trip,
   onChanged,
   bare = false,
+  readOnly = false,
 }: {
   trip: TripDetail;
   onChanged: () => void;
   bare?: boolean;
+  /** "唯讀" gating — hides the add-currency form, per-row rate edit/delete,
+   * and base-currency switch radios. See SettingsPageClient.tsx / lib/
+   * types.ts TripDetail.my_role's docstring. */
+  readOnly?: boolean;
 }) {
   const { showToast } = useToast();
   const [code, setCode] = useState("");
@@ -197,7 +203,7 @@ export default function CurrenciesSection({
                   type="radio"
                   name="base-currency"
                   checked={c.is_base}
-                  disabled={switchingBaseId !== null}
+                  disabled={readOnly || switchingBaseId !== null}
                   onChange={() => requestBase(c.id, c.code)}
                   aria-label={`將「${c.code}」設為基準幣`}
                   className="w-3.5 h-3.5 accent-teal-600 cursor-pointer disabled:cursor-not-allowed"
@@ -217,15 +223,16 @@ export default function CurrenciesSection({
                   "1.00000"
                 ) : (
                   <input
-                    className="w-24 border border-slate-300 rounded px-1.5 py-1 text-right text-xs tabular-nums"
+                    className="w-24 border border-slate-300 rounded px-1.5 py-1 text-right text-xs tabular-nums disabled:bg-slate-50 disabled:text-slate-400"
                     defaultValue={c.rate_to_base}
+                    disabled={readOnly}
                     onChange={(e) => setEditingRates((prev) => ({ ...prev, [c.id]: e.target.value }))}
                     onBlur={() => commitRate(c.id)}
                   />
                 )}
               </td>
               <td className="py-2 text-right">
-                {!c.is_base && (
+                {!c.is_base && !readOnly && (
                   <ConfirmButton
                     message={`確定要刪除幣別「${c.code}」嗎？若已被支出使用，刪除將會失敗。`}
                     onConfirm={() => remove(c.id, c.code)}
@@ -244,35 +251,32 @@ export default function CurrenciesSection({
           {ratesError}（已切換為手動輸入匯率模式）
         </p>
       )}
-      <div className="flex gap-2 mt-3 flex-wrap">
-        <select
-          className="flex-1 min-w-[140px] border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white"
-          value={code}
-          onChange={(e) => onSelectCode(e.target.value)}
-        >
-          <option value="">{ratesLoading ? "查詢匯率中…" : "選擇幣別…"}</option>
-          {currencyOptions.map((c) => (
-            <option key={c.code} value={c.code}>
-              {formatCurrencyOption(c)}
-            </option>
-          ))}
-        </select>
-        <input
-          className="w-28 border border-slate-300 rounded-lg px-3 py-2 text-sm"
-          placeholder="匯率"
-          type="text"
-          inputMode="decimal"
-          value={rate}
-          onChange={(e) => setRate(filterDecimalInput(e.target.value))}
-        />
-        <button
-          onClick={add}
-          disabled={busy}
-          className="border border-dashed border-slate-300 text-slate-500 hover:bg-slate-50 rounded-lg px-3.5 py-2 text-xs font-semibold whitespace-nowrap inline-flex items-center gap-1"
-        >
-          <Plus size={13} aria-hidden="true" /> 新增幣別
-        </button>
-      </div>
+      {!readOnly && (
+        <div className="flex gap-2 mt-3 flex-wrap">
+          <Select
+            className="flex-1 min-w-[140px]"
+            value={code}
+            onChange={onSelectCode}
+            placeholder={ratesLoading ? "查詢匯率中…" : "選擇幣別…"}
+            options={currencyOptions.map((c) => ({ value: c.code, label: formatCurrencyOption(c) }))}
+          />
+          <input
+            className="w-28 border border-slate-300 rounded-lg px-3 py-2 text-sm"
+            placeholder="匯率"
+            type="text"
+            inputMode="decimal"
+            value={rate}
+            onChange={(e) => setRate(filterDecimalInput(e.target.value))}
+          />
+          <button
+            onClick={add}
+            disabled={busy}
+            className="border border-dashed border-slate-300 text-slate-500 hover:bg-slate-50 rounded-lg px-3.5 py-2 text-xs font-semibold whitespace-nowrap inline-flex items-center gap-1"
+          >
+            <Plus size={13} aria-hidden="true" /> 新增幣別
+          </button>
+        </div>
+      )}
       {addError && <p className="text-[11.5px] text-rose-600 mt-1.5">{addError}</p>}
 
       {/* Confirm dialog for switching the trip's base currency — see

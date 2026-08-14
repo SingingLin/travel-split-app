@@ -22,10 +22,15 @@ export default function PaymentMethodsSection({
   trip,
   onChanged,
   bare = false,
+  readOnly = false,
 }: {
   trip: TripDetail;
   onChanged: () => void;
   bare?: boolean;
+  /** "唯讀" gating — hides 重設為預設 / 新增付款方式, and per-chip
+   * rename/remove. See SettingsPageClient.tsx / lib/types.ts
+   * TripDetail.my_role's docstring. */
+  readOnly?: boolean;
 }) {
   const { showToast } = useToast();
   const [name, setName] = useState("");
@@ -128,13 +133,15 @@ export default function PaymentMethodsSection({
       {!bare && (
         <div className="flex items-center justify-between mb-3">
           <p className="text-sm md:text-base font-semibold text-slate-900">付款方式</p>
-          <ConfirmButton
-            message="確定要重設付款方式嗎？將清空目前所有付款方式，並改回預設的 2 種付款方式（現金／信用卡）；已使用中的支出會自動變成「未指定」。"
-            onConfirm={resetToDefaults}
-            className="text-[11px] text-slate-400 hover:text-rose-600 font-medium"
-          >
-            {resetting ? "重設中…" : "重設為預設"}
-          </ConfirmButton>
+          {!readOnly && (
+            <ConfirmButton
+              message="確定要重設付款方式嗎？將清空目前所有付款方式，並改回預設的 2 種付款方式（現金／信用卡）；已使用中的支出會自動變成「未指定」。"
+              onConfirm={resetToDefaults}
+              className="text-[11px] text-slate-400 hover:text-rose-600 font-medium"
+            >
+              {resetting ? "重設中…" : "重設為預設"}
+            </ConfirmButton>
+          )}
         </div>
       )}
       <div className="flex flex-wrap gap-1.5 items-center">
@@ -160,31 +167,32 @@ export default function PaymentMethodsSection({
             <NeutralChip
               key={pm.id}
               label={pm.name}
-              onNameClick={() => startEdit(pm)}
-              onRemove={() => remove(pm.id, pm.name)}
+              onNameClick={readOnly ? undefined : () => startEdit(pm)}
+              onRemove={readOnly ? undefined : () => remove(pm.id, pm.name)}
             />
           )
         )}
-        {adding ? (
-          <input
-            autoFocus
-            className="border border-dashed border-slate-300 rounded-full px-3 py-1 text-xs text-slate-600 outline-none"
-            placeholder="付款方式名稱"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onBlur={add}
-            onKeyDown={(e) => e.key === "Enter" && add()}
-          />
-        ) : (
-          <button
-            onClick={() => setAdding(true)}
-            className="border border-dashed border-slate-300 rounded-full px-3 py-1 text-xs text-slate-400 font-medium inline-flex items-center gap-1"
-          >
-            <Plus size={12} aria-hidden="true" /> 新增付款方式
-          </button>
-        )}
+        {!readOnly &&
+          (adding ? (
+            <input
+              autoFocus
+              className="border border-dashed border-slate-300 rounded-full px-3 py-1 text-xs text-slate-600 outline-none"
+              placeholder="付款方式名稱"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onBlur={add}
+              onKeyDown={(e) => e.key === "Enter" && add()}
+            />
+          ) : (
+            <button
+              onClick={() => setAdding(true)}
+              className="border border-dashed border-slate-300 rounded-full px-3 py-1 text-xs text-slate-400 font-medium inline-flex items-center gap-1"
+            >
+              <Plus size={12} aria-hidden="true" /> 新增付款方式
+            </button>
+          ))}
       </div>
-      {bare && (
+      {bare && !readOnly && (
         <div className="mt-3">
           <ConfirmButton
             message="確定要重設付款方式嗎？將清空目前所有付款方式，並改回預設的 2 種付款方式（現金／信用卡）；已使用中的支出會自動變成「未指定」。"
